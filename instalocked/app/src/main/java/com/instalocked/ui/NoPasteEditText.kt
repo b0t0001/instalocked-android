@@ -22,12 +22,13 @@ class NoPasteEditText(context: Context) : EditText(context) {
 
     init {
         isLongClickable = false
-        setTextIsSelectable(false)
+        // NOTE: do NOT call setTextIsSelectable(false) here. On an editable
+        // TextView it also clears focusable and the movement method, which
+        // silently makes the field impossible to type in.
         inputType = InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_FLAG_MULTI_LINE or
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
-        setSingleLine(false)
         maxLines = 8
 
         val block = object : ActionMode.Callback {
@@ -54,8 +55,6 @@ class NoPasteEditText(context: Context) : EditText(context) {
             else -> super.onTextContextMenuItem(id)
         }
     }
-
-    override fun isSuggestionsEnabled(): Boolean = false
 
     override fun performLongClick(): Boolean = true
 

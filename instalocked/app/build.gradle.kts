@@ -40,7 +40,7 @@ android {
     }
 
     packaging {
-        resources.excludes += setOf("META-INF/*.kotlin_module", "kotlin/**", "META-INF/*.version")
+        resources.excludes += setOf("META-INF/*.kotlin_module", "META-INF/*.version")
     }
 }
 

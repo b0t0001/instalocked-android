@@ -150,15 +150,19 @@ class MainActivity : Activity() {
         setPadding(0, dp(4), 0, dp(4))
     })
 
-    private fun space(h: Int) = col.addView(TextView(this).apply {
-        height = dp(h)
+    private fun space(h: Int) = col.addView(android.view.View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(h)
+        )
     })
 
     private fun statusRow(label: String, ok: Boolean, onClick: () -> Unit) {
-        actionRow(if (ok) "\u2713  $label" else "\u2717  $label \u2014 tap to fix", onClick, ok)
+        actionRow(if (ok) "\u2713  $label" else "\u2717  $label \u2014 tap to fix", ok, onClick)
     }
 
-    private fun actionRow(label: String, onClick: () -> Unit, ok: Boolean = false) {
+    // onClick must be the LAST parameter. Kotlin only allows trailing-lambda
+    // syntax for the final argument, and every other call site here uses it.
+    private fun actionRow(label: String, ok: Boolean = false, onClick: () -> Unit) {
         col.addView(Button(this).apply {
             text = label
             isAllCaps = false
