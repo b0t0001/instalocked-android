@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "targetPackage": "com.instagram.android",
+
+  "_comment": "Selectors are best-effort guesses against a recent Instagram build. They WILL need calibration for your exact version. Turn on Capture mode in InstaLocked, open the screen in Instagram, then read the dump and adjust. Matching is: fires if ANY of `any` matches AND NONE of `none` matches. Unmatched screens are ALLOWED (fail-open) so a broken selector never locks you out of messages.",
+
+  "screens": {
+    "REELS_CREATE": {
+      "any": [
+        { "type": "resourceId", "contains": "clips_capture" },
+        { "type": "resourceId", "contains": "camera_shutter" },
+        { "type": "resourceId", "contains": "gallery_picker" },
+        { "type": "resourceId", "contains": "media_picker" },
+        { "type": "resourceId", "contains": "creation_" },
+        { "type": "resourceId", "contains": "caption_input" },
+        { "type": "resourceId", "contains": "share_button" },
+        { "type": "text", "contains": "add audio" },
+        { "type": "text", "contains": "new reel" },
+        { "type": "text", "contains": "share to" },
+        { "type": "contentDesc", "contains": "shutter" }
+      ],
+      "none": []
+    },
+
+    "REELS_CONSUME": {
+      "any": [
+        { "type": "resourceId", "contains": "clips_viewer" },
+        { "type": "resourceId", "contains": "clips_video_container" },
+        { "type": "resourceId", "contains": "reel_viewer_media" },
+        { "type": "contentDesc", "contains": "reels tab" },
+        { "type": "contentDesc", "contains": "reels tray" }
+      ],
+      "none": [
+        { "type": "resourceId", "contains": "clips_capture" },
+        { "type": "resourceId", "contains": "gallery_picker" }
+      ]
+    },
+
+    "REELS_FROM_DM": {
+      "_comment": "Structural confirmation that a reel viewer belongs to a DM rather than the algorithmic tab. Chrome that only exists on a shared reel: a reply composer, sender attribution, a back arrow instead of the bottom tab bar. Provenance (came from DMS seconds ago) is the primary signal; this is the confirmation and the fallback.",
+      "any": [
+        { "type": "resourceId", "contains": "direct_reply" },
+        { "type": "resourceId", "contains": "reel_viewer_reply" },
+        { "type": "resourceId", "contains": "message_composer" },
+        { "type": "resourceId", "contains": "direct_visual_reply" },
+        { "type": "contentDesc", "contains": "reply to" },
+        { "type": "text", "contains": "send message" },
+        { "type": "text", "contains": "reply to" }
+      ],
+      "none": [
+        { "type": "resourceId", "contains": "clips_tab" }
+      ]
+    },
+
+    "EXPLORE_GRID": {
+      "any": [
+        { "type": "resourceId", "contains": "explore_grid" },
+        { "type": "resourceId", "contains": "discover_grid" },
+        { "type": "resourceId", "contains": "explore_recycler" }
+      ],
+      "none": [
+        { "type": "resourceId", "contains": "search_result" },
+        { "type": "resourceId", "contains": "search_row" }
+      ]
+    },
+
+    "SEARCH": {
+      "any": [
+        { "type": "resourceId", "contains": "action_bar_search_edit_text" },
+        { "type": "resourceId", "contains": "search_edit_text" },
+        { "type": "resourceId", "contains": "search_result" },
+        { "type": "resourceId", "contains": "row_search_user" }
+      ],
+      "none": []
+    },
+
+    "DMS": {
+      "any": [
+        { "type": "resourceId", "contains": "direct_thread" },
+        { "type": "resourceId", "contains": "thread_message" },
+        { "type": "resourceId", "contains": "row_thread" },
+        { "type": "resourceId", "contains": "message_composer" },
+        { "type": "contentDesc", "contains": "direct messaging" }
+      ],
+      "none": []
+    },
+
+    "PROFILE": {
+      "any": [
+        { "type": "resourceId", "contains": "profile_header" },
+        { "type": "resourceId", "contains": "user_detail" },
+        { "type": "resourceId", "contains": "follow_button" },
+        { "type": "text", "contains": "followers" }
+      ],
+      "none": []
+    },
+
+    "STORY": {
+      "any": [
+        { "type": "resourceId", "contains": "reel_viewer_root" },
+        { "type": "resourceId", "contains": "story_viewer" }
+      ],
+      "none": []
+    },
+
+    "FEED": {
+      "any": [
+        { "type": "resourceId", "contains": "feed_timeline" },
+        { "type": "resourceId", "contains": "row_feed_photo" },
+        { "type": "resourceId", "contains": "main_feed" },
+        { "type": "resourceId", "contains": "stories_tray" }
+      ],
+      "none": []
+    }
+  },
+
+  "markers": {
+    "feedEnd": [
+      "suggested for you",
+      "suggested posts",
+      "you're all caught up",
+      "you are all caught up",
+      "based on your activity"
+    ]
+  },
+
+  "storyTray": {
+    "containerIds": ["stories_tray", "reel_tray", "story_tray_recycler"],
+    "itemIds": ["story_tray_item", "avatar_container", "reel_tray_item"]
+  },
+
+  "policy": {
+    "feedCap": 20,
+    "sessionMinutes": 5,
+    "gateWordCount": 30,
+    "gateMinDistinctWords": 14,
+    "gateSimilarityRejectThreshold": 0.65,
+    "maskRings": true,
+    "ringThicknessFraction": 0.055,
+    "ringOuterFraction": 0.92,
+    "ringVerticalBiasFraction": 0.44,
+    "ringColor": "#FF6E6E6E",
+    "dailySessionLimit": 4,
+    "dmReelProvenanceMs": 25000,
+    "dmReelBounce": true
+  }
+}

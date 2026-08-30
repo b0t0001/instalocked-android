@@ -1,0 +1,5 @@
+-keep class com.instalocked.service.GuardService { *; }
+-keep class com.instalocked.service.SessionService { *; }
+-keep class com.instalocked.ui.** { *; }
+-keep class com.instalocked.overlay.RingMaskView { *; }
+-dontwarn org.jetbrains.annotations.**
