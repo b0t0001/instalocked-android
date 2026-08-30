@@ -1,0 +1,64 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The project may sit at the repo root or one folder deep, depending on
+      # how it was uploaded. Find settings.gradle.kts and work from there.
+      - name: Locate project root
+        id: root
+        run: |
+          FOUND=$(find . -maxdepth 3 -name settings.gradle.kts | head -1)
+          if [ -z "$FOUND" ]; then
+            echo "::error::No settings.gradle.kts found. The source did not upload correctly."
+            find . -maxdepth 3 -type d -not -path '*/.git*'
+            exit 1
+          fi
+          DIR=$(dirname "$FOUND")
+          echo "dir=$DIR" >> $GITHUB_OUTPUT
+          echo "Building from: $DIR"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Generate wrapper
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: gradle wrapper --gradle-version 8.9
+
+      - name: Build debug APK
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build release APK
+        working-directory: ${{ steps.root.outputs.dir }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: instalocked-apk
+          path: |
+            ${{ steps.root.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
+            ${{ steps.root.outputs.dir }}/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
