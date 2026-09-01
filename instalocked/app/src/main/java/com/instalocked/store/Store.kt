@@ -1,7 +1,11 @@
 package com.instalocked.store
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import com.instalocked.policy.GuardState
 import org.json.JSONObject
 import java.io.File
@@ -81,6 +85,34 @@ object Store {
     fun readDump(ctx: Context): String {
         val f = File(ctx.filesDir, DUMP_FILE)
         return if (f.exists()) f.readText() else ""
+    }
+
+    fun dumpSizeKb(ctx: Context): Long {
+        val f = File(ctx.filesDir, DUMP_FILE)
+        return if (f.exists()) f.length() / 1024 else 0
+    }
+
+    /**
+     * Copy the dump somewhere reachable. filesDir is app-private, so without
+     * this the diagnostic file may as well not exist unless you have adb.
+     */
+    fun exportDump(ctx: Context): String? {
+        val text = readDump(ctx)
+        if (text.isBlank()) return null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return try {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "instalocked_dump.txt")
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = ctx.contentResolver
+                .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+            ctx.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+            "Downloads/instalocked_dump.txt"
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     // ---- Essays ----

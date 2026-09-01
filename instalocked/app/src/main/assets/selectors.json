@@ -23,12 +23,12 @@
     },
 
     "REELS_CONSUME": {
+      "_comment": "ONLY match containers that exist when a reel is actually on screen. Never match the bottom navigation bar: Instagram renders Reels/Explore tab buttons on EVERY screen, so any rule keyed to their contentDescription fires everywhere and gates the whole app.",
       "any": [
         { "type": "resourceId", "contains": "clips_viewer" },
         { "type": "resourceId", "contains": "clips_video_container" },
-        { "type": "resourceId", "contains": "reel_viewer_media" },
-        { "type": "contentDesc", "contains": "reels tab" },
-        { "type": "contentDesc", "contains": "reels tray" }
+        { "type": "resourceId", "contains": "clips_swipe" },
+        { "type": "resourceId", "contains": "reel_viewer_media" }
       ],
       "none": [
         { "type": "resourceId", "contains": "clips_capture" },
@@ -53,25 +53,33 @@
     },
 
     "EXPLORE_GRID": {
+      "_comment": "Grid containers only. Do NOT add contentDesc 'explore' here: that is the permanent bottom-nav button and it is present on every screen in the app.",
       "any": [
         { "type": "resourceId", "contains": "explore_grid" },
         { "type": "resourceId", "contains": "discover_grid" },
-        { "type": "resourceId", "contains": "explore_recycler" }
+        { "type": "resourceId", "contains": "explore_recycler" },
+        { "type": "resourceId", "contains": "explore_feed" }
       ],
       "none": [
-        { "type": "resourceId", "contains": "search_result" },
-        { "type": "resourceId", "contains": "search_row" }
+        { "type": "resourceId", "contains": "row_search_user" },
+        { "type": "resourceId", "contains": "search_result" }
       ]
     },
 
     "SEARCH": {
+      "_comment": "Must require evidence of an actual search: result rows or a typed query. The Explore page carries a search field at the top, so matching on the field alone lets the whole discovery grid through as SEARCH.",
       "any": [
-        { "type": "resourceId", "contains": "action_bar_search_edit_text" },
-        { "type": "resourceId", "contains": "search_edit_text" },
+        { "type": "resourceId", "contains": "row_search_user" },
         { "type": "resourceId", "contains": "search_result" },
-        { "type": "resourceId", "contains": "row_search_user" }
+        { "type": "resourceId", "contains": "row_search_for_x" },
+        { "type": "resourceId", "contains": "search_people" },
+        { "type": "contentDesc", "contains": "search results" }
       ],
-      "none": []
+      "none": [
+        { "type": "resourceId", "contains": "explore_grid" },
+        { "type": "resourceId", "contains": "discover_grid" },
+        { "type": "resourceId", "contains": "explore_recycler" }
+      ]
     },
 
     "DMS": {

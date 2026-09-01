@@ -11,8 +11,8 @@ android {
         applicationId = "com.instalocked"
         minSdk = 26
         targetSdk = 30
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 4
+        versionName = "1.3-calibration"
     }
 
     buildTypes {
@@ -31,6 +31,10 @@ android {
     }
 
     lint {
+        // This app is sideloaded to one device and will never be distributed
+        // through Google Play, so the Play targetSdk floor does not apply.
+        // targetSdk 30 is a deliberate match for the target phone (Android 11)
+        // and avoids the Android 12+ behaviour changes we don't want.
         disable += "ExpiredTargetSdkVersion"
         checkReleaseBuilds = false
         abortOnError = false

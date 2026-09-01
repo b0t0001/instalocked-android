@@ -56,7 +56,7 @@ class OverlayManager(private val ctx: Context) {
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#F2101010"))
+            setBackgroundColor(Color.parseColor("#FF0B0B0B"))
             setPadding(dp(32), dp(64), dp(32), dp(64))
             isClickable = true
             isFocusable = true

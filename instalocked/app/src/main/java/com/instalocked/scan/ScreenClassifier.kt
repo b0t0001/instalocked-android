@@ -39,9 +39,12 @@ object ScreenClassifier {
      */
     private val ORDER = listOf(
         "DMS" to Screen.DMS,
-        "SEARCH" to Screen.SEARCH,
         "STORY" to Screen.STORY,
+        // EXPLORE_GRID must come BEFORE SEARCH. Instagram's Explore page has a
+        // search field at the top, so testing SEARCH first classified the entire
+        // discovery grid as "the user is searching" and allowed it straight through.
         "EXPLORE_GRID" to Screen.EXPLORE_GRID,
+        "SEARCH" to Screen.SEARCH,
         "PROFILE" to Screen.PROFILE,
         "FEED" to Screen.FEED
     )

@@ -2,6 +2,7 @@ package com.instalocked.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
@@ -24,6 +25,21 @@ class GuardService : AccessibilityService() {
 
         /** Throttle for content-changed events; state-changed always goes through. */
         private const val CONTENT_THROTTLE_MS = 350L
+
+        /** Quiet period after mutating an overlay, to break the event feedback loop. */
+        const val OVERLAY_QUIET_MS = 600L
+
+        /** Consecutive all-clear evaluations required before taking a scrim down. */
+        const val CLEAR_STREAK_REQUIRED = 2
+
+        /** Consecutive gate verdicts required before a scrim is raised. */
+        const val GATE_STREAK_REQUIRED = 2
+
+        /** Minimum gap between the back-actions that stop reel playback. */
+        const val GATE_BACK_COOLDOWN_MS = 1500L
+
+        /** Upper bound on distinct screens recorded in one capture run. */
+        const val MAX_CAPTURED_SCREENS = 14
     }
 
     private lateinit var config: Config
@@ -39,6 +55,24 @@ class GuardService : AccessibilityService() {
     private var dmReelIndex = Int.MIN_VALUE
     private var lastBounceAt = 0L
 
+    /**
+     * Anti-flicker state.
+     *
+     * Adding or removing a fullscreen overlay makes Instagram emit window and
+     * content events, which triggers another evaluation, which can toggle the
+     * overlay again. That loop is what makes the screen strobe. Two brakes:
+     * a quiet period after any overlay mutation, and a requirement that a
+     * non-gated classification repeat before we take a scrim down.
+     */
+    private var overlayQuietUntil = 0L
+    private var clearStreak = 0
+    private var gateStreak = 0
+    private var scrimScreen: Screen? = null
+    private var lastGateBackAt = 0L
+
+    /** Distinct screens already written during capture, keyed by resource-ID set. */
+    private val capturedSignatures = HashSet<Int>()
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -49,6 +83,11 @@ class GuardService : AccessibilityService() {
 
     fun reloadConfig() {
         config = Config.load(this)
+    }
+
+    /** Called when a fresh capture run starts, so each run collects screens anew. */
+    fun resetCapture() {
+        capturedSignatures.clear()
     }
 
     /** Called by SessionService when the five minutes are up. */
@@ -76,13 +115,24 @@ class GuardService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 if (currentScreen == Screen.REELS_FROM_DM && config.policy.dmReelBounce) {
                     val to = event.toIndex
+                    var swiped = false
                     if (to >= 0) {
                         if (dmReelIndex == Int.MIN_VALUE) {
                             dmReelIndex = to
                         } else if (to != dmReelIndex) {
-                            bounceOutOfDmReel()
-                            return
+                            swiped = true
                         }
+                    }
+                    // Fallback: some Instagram builds run the shared-reel viewer
+                    // as a pager that never reports an adapter index. Vertical
+                    // scroll delta catches the swipe in that case.
+                    if (!swiped && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        val dy = try { event.scrollDeltaY } catch (t: Throwable) { 0 }
+                        if (dy != 0 && kotlin.math.abs(dy) > 40) swiped = true
+                    }
+                    if (swiped) {
+                        bounceOutOfDmReel()
+                        return
                     }
                 }
                 if (currentScreen == Screen.FEED) {
@@ -137,10 +187,28 @@ class GuardService : AccessibilityService() {
 
         val decision = PolicyEngine.decide(screen, state, config, now)
 
+        // Quiet period after any overlay mutation. Adding or removing a
+        // fullscreen window makes Instagram emit more events, and reacting to
+        // those is what produced the strobing.
+        if (now < overlayQuietUntil) return
+
         // ---- gate ----
         if (decision.gate) {
-            if (!overlays.scrimVisible) {
+            clearStreak = 0
+            // Require the same verdict twice running. A transient or overly
+            // broad selector match should not be able to throw a full-screen
+            // block in front of you on a screen you are only passing through.
+            gateStreak++
+            if (gateStreak >= GATE_STREAK_REQUIRED && !overlays.scrimVisible) {
+                // An overlay hides pixels; it does not pause a video. Leave the
+                // reel viewer first so playback and audio actually stop, then
+                // put the gate up over wherever we land.
+                if (now - lastGateBackAt > GATE_BACK_COOLDOWN_MS) {
+                    lastGateBackAt = now
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                }
                 val what = if (screen == Screen.EXPLORE_GRID) "Explore" else "Reels"
+                scrimScreen = screen
                 overlays.showScrim(
                     title = "$what is gated",
                     body = "Type thirty words about why you are opening this. " +
@@ -150,12 +218,17 @@ class GuardService : AccessibilityService() {
                     secondaryLabel = "Go back",
                     onSecondary = {
                         overlays.hideScrim()
+                        overlayQuietUntil = System.currentTimeMillis() + OVERLAY_QUIET_MS
                         performGlobalAction(GLOBAL_ACTION_BACK)
                     }
                 )
+                overlayQuietUntil = now + OVERLAY_QUIET_MS
             }
         } else if (decision.feedEnd) {
+            clearStreak = 0
+            gateStreak = 0
             if (!overlays.scrimVisible) {
+                scrimScreen = screen
                 overlays.showScrim(
                     title = "That's the feed",
                     body = if (decision.reason.contains("suggested"))
@@ -167,12 +240,27 @@ class GuardService : AccessibilityService() {
                     secondaryLabel = "Go back",
                     onSecondary = {
                         overlays.hideScrim()
+                        overlayQuietUntil = System.currentTimeMillis() + OVERLAY_QUIET_MS
                         performGlobalAction(GLOBAL_ACTION_BACK)
                     }
                 )
+                overlayQuietUntil = now + OVERLAY_QUIET_MS
+            }
+        } else if (overlays.scrimVisible) {
+            gateStreak = 0
+            // Require the all-clear twice running before taking a scrim down.
+            // A single stray frame classifying as something benign was enough to
+            // start the show/hide oscillation.
+            clearStreak++
+            if (clearStreak >= CLEAR_STREAK_REQUIRED) {
+                clearStreak = 0
+                scrimScreen = null
+                overlays.hideScrim()
+                overlayQuietUntil = now + OVERLAY_QUIET_MS
             }
         } else {
-            overlays.hideScrim()
+            clearStreak = 0
+            gateStreak = 0
         }
 
         // ---- ring masking ----
@@ -243,24 +331,42 @@ class GuardService : AccessibilityService() {
     }
 
     /**
-     * Capture mode. Writes the flattened node tree to a file for a few minutes
-     * so selectors can be re-derived after an Instagram update without a rebuild.
+     * Capture mode. Writes the flattened node tree so selectors can be
+     * re-derived after an Instagram update without a rebuild.
+     *
+     * Two constraints learned the hard way. First, this fires on every
+     * accessibility event, so without deduplication three minutes of capture
+     * produces hundreds of near-identical dumps and a file too large to read.
+     * We key on the set of resource IDs and write each distinct screen once.
+     *
+     * Second, we do NOT dump arbitrary on-screen text. On a DM screen that is
+     * your actual conversation. Only text matching a configured marker is
+     * recorded, since that is all the classifier ever looks at.
      */
     private fun maybeCapture(scan: NodeScan) {
         val until = Store.captureUntil(this)
         if (until <= 0L || System.currentTimeMillis() > until) return
+        if (capturedSignatures.size >= MAX_CAPTURED_SCREENS) return
+
+        val signature = scan.resourceIds.sorted().joinToString("|").hashCode()
+        if (!capturedSignatures.add(signature)) return
+
+        val markerHits = config.feedEndMarkers.filter { scan.hasText(it) }
+
         val sb = StringBuilder()
-        sb.append("=== ").append(System.currentTimeMillis())
+        sb.append("=== screen ").append(capturedSignatures.size)
             .append("  nodes=").append(scan.nodeCount)
             .append(" truncated=").append(scan.truncated).append("\n")
         sb.append("-- resourceIds --\n")
         scan.resourceIds.sorted().forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- contentDescs --\n")
-        scan.contentDescs.sorted().take(60).forEach { sb.append("  ").append(it).append("\n") }
-        sb.append("-- texts --\n")
-        scan.texts.sorted().take(60).forEach { sb.append("  ").append(it).append("\n") }
+        scan.contentDescs.sorted().take(40).forEach { sb.append("  ").append(it).append("\n") }
+        sb.append("-- marker text hits --\n")
+        if (markerHits.isEmpty()) sb.append("  (none)\n")
+        else markerHits.forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- trayItemBounds --\n")
-        scan.trayItemBounds.forEach { sb.append("  ").append(it.toShortString()).append("\n") }
+        if (scan.trayItemBounds.isEmpty()) sb.append("  (none found)\n")
+        else scan.trayItemBounds.forEach { sb.append("  ").append(it.toShortString()).append("\n") }
         sb.append("\n")
         Store.appendDump(this, sb.toString())
     }
