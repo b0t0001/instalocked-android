@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">InstaLocked</string>
+    <string name="accessibility_description">Reads Instagram\'s on-screen layout so it can gate the Reels and Explore feeds, cap the home feed, and grey out story rings. Nothing leaves the device; the app has no internet permission.</string>
+</resources>
