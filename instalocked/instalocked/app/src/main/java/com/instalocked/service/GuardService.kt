@@ -32,11 +32,17 @@ class GuardService : AccessibilityService() {
         /** Consecutive all-clear evaluations required before taking a scrim down. */
         const val CLEAR_STREAK_REQUIRED = 2
 
+        /** Consecutive gate verdicts required before a scrim is raised. */
+        const val GATE_STREAK_REQUIRED = 2
+
         /** Minimum gap between the back-actions that stop reel playback. */
         const val GATE_BACK_COOLDOWN_MS = 1500L
 
         /** Upper bound on distinct screens recorded in one capture run. */
-        const val MAX_CAPTURED_SCREENS = 14
+        const val MAX_CAPTURED_SCREENS = 24
+
+        /** Max dumps recorded per classification, so one screen can't hog the budget. */
+        const val PER_SCREEN_QUOTA = 3
     }
 
     private lateinit var config: Config
@@ -63,11 +69,23 @@ class GuardService : AccessibilityService() {
      */
     private var overlayQuietUntil = 0L
     private var clearStreak = 0
+    private var gateStreak = 0
     private var scrimScreen: Screen? = null
     private var lastGateBackAt = 0L
 
     /** Distinct screens already written during capture, keyed by resource-ID set. */
     private val capturedSignatures = HashSet<Int>()
+
+    /**
+     * Per-classification quota for capture.
+     *
+     * Keying dedup on the exact resource-ID set was not enough: the home feed's
+     * IDs shift slightly with every post scrolled, so each scroll position read
+     * as a brand new screen and the entire capture budget was spent on the feed
+     * before ever reaching Reels or Explore. A per-screen-type quota guarantees
+     * coverage across the screens that actually matter.
+     */
+    private val capturedPerScreen = HashMap<Screen, Int>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -84,6 +102,7 @@ class GuardService : AccessibilityService() {
     /** Called when a fresh capture run starts, so each run collects screens anew. */
     fun resetCapture() {
         capturedSignatures.clear()
+        capturedPerScreen.clear()
     }
 
     /** Called by SessionService when the five minutes are up. */
@@ -162,7 +181,6 @@ class GuardService : AccessibilityService() {
         val root = try { rootInActiveWindow } catch (t: Throwable) { null } ?: return
         val scan = try { NodeScan.of(root, config) } catch (t: Throwable) { return }
 
-        maybeCapture(scan)
 
         val now = System.currentTimeMillis()
         val ctx = ClassifyContext(
@@ -170,6 +188,7 @@ class GuardService : AccessibilityService() {
             provenanceWindowMs = config.policy.dmReelProvenanceMs
         )
         val screen = ScreenClassifier.classify(scan, config, ctx)
+        maybeCapture(scan, screen)
 
         if (screen != currentScreen) {
             lastScreen = currentScreen
@@ -191,7 +210,11 @@ class GuardService : AccessibilityService() {
         // ---- gate ----
         if (decision.gate) {
             clearStreak = 0
-            if (!overlays.scrimVisible) {
+            // Require the same verdict twice running. A transient or overly
+            // broad selector match should not be able to throw a full-screen
+            // block in front of you on a screen you are only passing through.
+            gateStreak++
+            if (gateStreak >= GATE_STREAK_REQUIRED && !overlays.scrimVisible) {
                 // An overlay hides pixels; it does not pause a video. Leave the
                 // reel viewer first so playback and audio actually stop, then
                 // put the gate up over wherever we land.
@@ -218,6 +241,7 @@ class GuardService : AccessibilityService() {
             }
         } else if (decision.feedEnd) {
             clearStreak = 0
+            gateStreak = 0
             if (!overlays.scrimVisible) {
                 scrimScreen = screen
                 overlays.showScrim(
@@ -238,6 +262,7 @@ class GuardService : AccessibilityService() {
                 overlayQuietUntil = now + OVERLAY_QUIET_MS
             }
         } else if (overlays.scrimVisible) {
+            gateStreak = 0
             // Require the all-clear twice running before taking a scrim down.
             // A single stray frame classifying as something benign was enough to
             // start the show/hide oscillation.
@@ -250,6 +275,7 @@ class GuardService : AccessibilityService() {
             }
         } else {
             clearStreak = 0
+            gateStreak = 0
         }
 
         // ---- ring masking ----
@@ -275,6 +301,13 @@ class GuardService : AccessibilityService() {
             Screen.DMS -> {
                 state.lastDmsAt = now
                 dmReelIndex = Int.MIN_VALUE
+                PolicyEngine.resetFeedCounters(state)
+            }
+            Screen.REELS_CONSUME, Screen.EXPLORE_GRID, Screen.SEARCH -> {
+                // Left the home feed for real: drop the post counter so a stale
+                // high-water mark can't make the end-of-feed scrim follow you
+                // onto screens that have nothing to do with the feed.
+                PolicyEngine.resetFeedCounters(state)
             }
             Screen.REELS_FROM_DM -> {
                 // Re-arm on each entry so the first scroll event establishes the
@@ -332,22 +365,29 @@ class GuardService : AccessibilityService() {
      * your actual conversation. Only text matching a configured marker is
      * recorded, since that is all the classifier ever looks at.
      */
-    private fun maybeCapture(scan: NodeScan) {
+    private fun maybeCapture(scan: NodeScan, screen: Screen) {
         val until = Store.captureUntil(this)
         if (until <= 0L || System.currentTimeMillis() > until) return
+        if (scan.idNames.isEmpty()) return
         if (capturedSignatures.size >= MAX_CAPTURED_SCREENS) return
 
-        val signature = scan.resourceIds.sorted().joinToString("|").hashCode()
+        // Quota per screen type, so the home feed cannot eat the whole budget.
+        val seen = capturedPerScreen[screen] ?: 0
+        if (seen >= PER_SCREEN_QUOTA) return
+
+        val signature = scan.idNames.sorted().joinToString("|").hashCode()
         if (!capturedSignatures.add(signature)) return
+        capturedPerScreen[screen] = seen + 1
 
         val markerHits = config.feedEndMarkers.filter { scan.hasText(it) }
 
         val sb = StringBuilder()
         sb.append("=== screen ").append(capturedSignatures.size)
+            .append("  classified=").append(screen.name)
             .append("  nodes=").append(scan.nodeCount)
             .append(" truncated=").append(scan.truncated).append("\n")
         sb.append("-- resourceIds --\n")
-        scan.resourceIds.sorted().forEach { sb.append("  ").append(it).append("\n") }
+        scan.idNames.sorted().forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- contentDescs --\n")
         scan.contentDescs.sorted().take(40).forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- marker text hits --\n")

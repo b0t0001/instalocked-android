@@ -5,12 +5,25 @@ import android.graphics.Color
 import org.json.JSONObject
 import java.io.File
 
-/** A single signal to look for in the scanned node tree. */
-data class Matcher(val type: String, val contains: String) {
+/**
+ * A single signal to look for in the scanned node tree.
+ *
+ * [mode] matters more than it looks. Substring matching on resource IDs is a
+ * trap: "main_feed" is a substring of "main_feed_action_bar", which Instagram
+ * renders on EVERY screen, so a substring rule for the home feed matched the
+ * entire app. Resource IDs now default to exact matching on the short name
+ * (the part after "id/"). Use prefix or contains only deliberately.
+ */
+data class Matcher(
+    val type: String,
+    val contains: String,
+    val mode: String = "equals"
+) {
     companion object {
         fun from(o: JSONObject) = Matcher(
             type = o.optString("type", "resourceId"),
-            contains = o.optString("contains", "").lowercase()
+            contains = o.optString("contains", "").lowercase(),
+            mode = o.optString("mode", if (o.optString("type") == "resourceId") "equals" else "contains")
         )
     }
 }

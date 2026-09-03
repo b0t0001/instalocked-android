@@ -13,7 +13,10 @@ import com.instalocked.config.Config
  * being watched. Hence the hard caps on node count and depth.
  */
 class NodeScan(
+    /** Full ids, e.g. "com.instagram.android:id/main_feed_action_bar". */
     val resourceIds: Set<String>,
+    /** Short names only, e.g. "main_feed_action_bar". What matchers compare against. */
+    val idNames: Set<String>,
     val contentDescs: Set<String>,
     val texts: Set<String>,
     val trayItemBounds: List<Rect>,
@@ -24,11 +27,16 @@ class NodeScan(
     fun hasContentDesc(fragment: String) = contentDescs.any { it.contains(fragment) }
     fun hasText(fragment: String) = texts.any { it.contains(fragment) }
 
+    private fun idMatches(m: com.instalocked.config.Matcher): Boolean = when (m.mode) {
+        "prefix" -> idNames.any { it.startsWith(m.contains) }
+        "contains" -> idNames.any { it.contains(m.contains) }
+        else -> idNames.contains(m.contains)
+    }
+
     fun matches(m: com.instalocked.config.Matcher): Boolean = when (m.type) {
-        "resourceId" -> hasResourceId(m.contains)
+        "resourceId" -> idMatches(m)
         "contentDesc" -> hasContentDesc(m.contains)
         "text" -> hasText(m.contains)
-        "any" -> hasResourceId(m.contains) || hasContentDesc(m.contains) || hasText(m.contains)
         else -> false
     }
 
@@ -38,6 +46,7 @@ class NodeScan(
 
         fun of(root: AccessibilityNodeInfo?, config: Config): NodeScan {
             val ids = HashSet<String>(128)
+            val names = HashSet<String>(128)
             val descs = HashSet<String>(64)
             val texts = HashSet<String>(128)
             val trayBounds = ArrayList<Rect>(12)
@@ -45,7 +54,7 @@ class NodeScan(
             var truncated = false
 
             if (root == null) {
-                return NodeScan(ids, descs, texts, trayBounds, 0, false)
+                return NodeScan(ids, names, descs, texts, trayBounds, 0, false)
             }
 
             // Explicit stack rather than recursion: Instagram's trees are deep and
@@ -61,6 +70,7 @@ class NodeScan(
                 val vid = node.viewIdResourceName?.lowercase()
                 if (vid != null) {
                     ids.add(vid)
+                    names.add(vid.substringAfter("id/"))
                     // Collect story tray item geometry while we are already here,
                     // so masking never needs a second traversal.
                     if (config.trayItemIds.any { vid.contains(it) }) {
@@ -97,7 +107,7 @@ class NodeScan(
             }
 
             trayBounds.sortBy { it.left }
-            return NodeScan(ids, descs, texts, trayBounds, count, truncated)
+            return NodeScan(ids, names, descs, texts, trayBounds, count, truncated)
         }
 
         private fun findTrayByContainer(

@@ -50,6 +50,16 @@ class MainActivity : Activity() {
         }
 
         heading("InstaLocked")
+        val ver = try {
+            val pi = packageManager.getPackageInfo(packageName, 0)
+            "v${pi.versionName} (build ${pi.versionCode})"
+        } catch (t: Throwable) { "version unknown" }
+        col.addView(TextView(this).apply {
+            text = ver
+            setTextColor(Color.parseColor("#5B8DEF"))
+            textSize = 13f
+            setPadding(0, dp(2), 0, dp(6))
+        })
         val cfg = Config.load(this)
         body("Selector config v${cfg.version} \u00b7 feed cap ${cfg.policy.feedCap} \u00b7 " +
             "${cfg.policy.sessionMinutes} min sessions \u00b7 ${cfg.policy.dailySessionLimit}/day")
@@ -106,7 +116,11 @@ class MainActivity : Activity() {
         body("Dump size: ${Store.dumpSizeKb(this)} KB")
         actionRow("Save dump to Downloads") {
             val where = Store.exportDump(this)
-            body(if (where != null) "Saved to $where" else "Nothing to export yet.")
+            android.widget.Toast.makeText(
+                this,
+                if (where != null) "Saved to $where" else "Nothing captured yet.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
             setContentView(build())
         }
         actionRow("View last dump") { showDump() }

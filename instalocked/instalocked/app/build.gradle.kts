@@ -11,8 +11,8 @@ android {
         applicationId = "com.instalocked"
         minSdk = 26
         targetSdk = 30
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 5
+        versionName = "2.0-exactmatch"
     }
 
     buildTypes {

@@ -1,8 +1,18 @@
 {
-  "version": 1,
+  "version": 2,
   "targetPackage": "com.instagram.android",
 
-  "_comment": "Selectors are best-effort guesses against a recent Instagram build. They WILL need calibration for your exact version. Turn on Capture mode in InstaLocked, open the screen in Instagram, then read the dump and adjust. Matching is: fires if ANY of `any` matches AND NONE of `none` matches. Unmatched screens are ALLOWED (fail-open) so a broken selector never locks you out of messages.",
+  "_comment": "v2, rebuilt from a real device dump. Resource-ID matchers now default to EXACT matching on the short name (after 'id/'). Substring matching caused the whole-app gating bug: 'main_feed' is a substring of 'main_feed_action_bar', which Instagram renders on every single screen. Use \"mode\":\"prefix\" or \"contains\" only when deliberately intended.",
+
+  "_chrome_note": "The ids below were confirmed present on all 14 captured screens. They are app chrome, not content. Never key a rule to any of them.",
+  "_chrome_never_match": [
+    "main_feed_action_bar", "action_bar_root", "action_bar_linearlayout",
+    "tab_bar", "tab_icon", "tab_avatar", "clips_tab", "feed_tab",
+    "direct_tab", "search_tab", "profile_tab", "container", "wrapper",
+    "modal_container", "sticky_header_list", "refreshable_container",
+    "swipeable_tab_view_pager", "swipe_navigation_container",
+    "layout_container_main", "overlay_layout_container"
+  ],
 
   "screens": {
     "REELS_CREATE": {
@@ -11,113 +21,108 @@
         { "type": "resourceId", "contains": "camera_shutter" },
         { "type": "resourceId", "contains": "gallery_picker" },
         { "type": "resourceId", "contains": "media_picker" },
-        { "type": "resourceId", "contains": "creation_" },
+        { "type": "resourceId", "mode": "prefix", "contains": "creation_" },
         { "type": "resourceId", "contains": "caption_input" },
-        { "type": "resourceId", "contains": "share_button" },
-        { "type": "text", "contains": "add audio" },
-        { "type": "text", "contains": "new reel" },
-        { "type": "text", "contains": "share to" },
         { "type": "contentDesc", "contains": "shutter" }
       ],
       "none": []
     },
 
     "REELS_CONSUME": {
+      "_comment": "The full-screen Reels player. NOT yet confirmed against a dump: the capture never reached the Reels tab. The 'none' list is confirmed though: clips_container / clips_items_view / clips_header_* are the inline Reels CAROUSEL embedded in the home feed, and clips_tab is the nav button. All appear while you are on the home feed and must never trigger a gate.",
       "any": [
         { "type": "resourceId", "contains": "clips_viewer" },
         { "type": "resourceId", "contains": "clips_video_container" },
-        { "type": "resourceId", "contains": "reel_viewer_media" },
-        { "type": "contentDesc", "contains": "reels tab" },
-        { "type": "contentDesc", "contains": "reels tray" }
+        { "type": "resourceId", "mode": "prefix", "contains": "clips_viewer_" },
+        { "type": "resourceId", "contains": "reel_viewer_media" }
       ],
       "none": [
-        { "type": "resourceId", "contains": "clips_capture" },
-        { "type": "resourceId", "contains": "gallery_picker" }
+        { "type": "resourceId", "contains": "clips_tab" },
+        { "type": "resourceId", "contains": "clips_container" },
+        { "type": "resourceId", "contains": "clips_items_view" },
+        { "type": "resourceId", "contains": "clips_header_container" },
+        { "type": "resourceId", "contains": "clips_dismiss_button" },
+        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" },
+        { "type": "resourceId", "contains": "clips_capture" }
       ]
     },
 
     "REELS_FROM_DM": {
-      "_comment": "Structural confirmation that a reel viewer belongs to a DM rather than the algorithmic tab. Chrome that only exists on a shared reel: a reply composer, sender attribution, a back arrow instead of the bottom tab bar. Provenance (came from DMS seconds ago) is the primary signal; this is the confirmation and the fallback.",
+      "_comment": "Not yet confirmed. clips_tab removed from 'none' because it is nav chrome present everywhere, which would have permanently disabled this rule.",
       "any": [
         { "type": "resourceId", "contains": "direct_reply" },
         { "type": "resourceId", "contains": "reel_viewer_reply" },
-        { "type": "resourceId", "contains": "message_composer" },
         { "type": "resourceId", "contains": "direct_visual_reply" },
-        { "type": "contentDesc", "contains": "reply to" },
-        { "type": "text", "contains": "send message" },
-        { "type": "text", "contains": "reply to" }
+        { "type": "contentDesc", "contains": "reply to" }
       ],
-      "none": [
-        { "type": "resourceId", "contains": "clips_tab" }
-      ]
+      "none": []
     },
 
     "EXPLORE_GRID": {
+      "_comment": "Not yet confirmed: the capture never reached Explore. Deliberately narrow, so Explore will currently fail open rather than gate the wrong thing.",
       "any": [
         { "type": "resourceId", "contains": "explore_grid" },
         { "type": "resourceId", "contains": "discover_grid" },
         { "type": "resourceId", "contains": "explore_recycler" },
-        { "type": "resourceId", "contains": "explore_" },
-        { "type": "resourceId", "contains": "discovery_" },
-        { "type": "contentDesc", "contains": "explore" }
+        { "type": "resourceId", "contains": "explore_feed" }
       ],
       "none": [
         { "type": "resourceId", "contains": "row_search_user" },
-        { "type": "resourceId", "contains": "search_result" }
+        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" }
       ]
     },
 
     "SEARCH": {
-      "_comment": "Must require evidence of an actual search: result rows or a typed query. The Explore page carries a search field at the top, so matching on the field alone lets the whole discovery grid through as SEARCH.",
       "any": [
         { "type": "resourceId", "contains": "row_search_user" },
         { "type": "resourceId", "contains": "search_result" },
         { "type": "resourceId", "contains": "row_search_for_x" },
-        { "type": "resourceId", "contains": "search_people" },
-        { "type": "contentDesc", "contains": "search results" }
+        { "type": "resourceId", "contains": "search_people" }
       ],
       "none": [
-        { "type": "resourceId", "contains": "explore_grid" },
-        { "type": "resourceId", "contains": "discover_grid" },
-        { "type": "resourceId", "contains": "explore_recycler" }
+        { "type": "resourceId", "contains": "explore_grid" }
       ]
     },
 
     "DMS": {
+      "_comment": "direct_tab removed: it is the permanent nav button, present on every screen.",
       "any": [
         { "type": "resourceId", "contains": "direct_thread" },
         { "type": "resourceId", "contains": "thread_message" },
         { "type": "resourceId", "contains": "row_thread" },
         { "type": "resourceId", "contains": "message_composer" },
-        { "type": "contentDesc", "contains": "direct messaging" }
+        { "type": "resourceId", "contains": "row_inbox_container" }
       ],
       "none": []
     },
 
     "PROFILE": {
+      "_comment": "'followers' text removed: it appears in feed rows too. profile_tab removed: nav chrome.",
       "any": [
         { "type": "resourceId", "contains": "profile_header" },
         { "type": "resourceId", "contains": "user_detail" },
-        { "type": "resourceId", "contains": "follow_button" },
-        { "type": "text", "contains": "followers" }
+        { "type": "resourceId", "contains": "profile_header_avatar" }
       ],
-      "none": []
+      "none": [
+        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" }
+      ]
     },
 
     "STORY": {
       "any": [
         { "type": "resourceId", "contains": "reel_viewer_root" },
-        { "type": "resourceId", "contains": "story_viewer" }
+        { "type": "resourceId", "contains": "story_viewer" },
+        { "type": "resourceId", "contains": "reel_viewer_texture_view" }
       ],
       "none": []
     },
 
     "FEED": {
+      "_comment": "CONFIRMED from dump. row_feed_* is the only reliable home-feed signal. 'main_feed' was the bug: it substring-matched main_feed_action_bar, which is on every screen, so the entire app classified as FEED and the 20-post cap fired everywhere.",
       "any": [
-        { "type": "resourceId", "contains": "feed_timeline" },
-        { "type": "resourceId", "contains": "row_feed_photo" },
-        { "type": "resourceId", "contains": "main_feed" },
-        { "type": "resourceId", "contains": "stories_tray" }
+        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" },
+        { "type": "resourceId", "contains": "row_feed_profile_header" },
+        { "type": "resourceId", "contains": "row_feed_photo_imageview" }
       ],
       "none": []
     }
@@ -134,8 +139,9 @@
   },
 
   "storyTray": {
-    "containerIds": ["stories_tray", "reel_tray", "story_tray_recycler"],
-    "itemIds": ["story_tray_item", "avatar_container", "reel_tray_item"]
+    "_comment": "UNCONFIRMED. No story tray appeared in any captured screen (all 14 were scrolled past it), so no tray ID is known yet and rings cannot draw. Needs a capture taken at the very top of the home feed.",
+    "containerIds": ["stories_tray", "reel_tray", "story_tray_recycler", "stories_tray_container"],
+    "itemIds": ["story_tray_item", "avatar_container", "reel_tray_item", "story_avatar"]
   },
 
   "policy": {
