@@ -1,133 +1,265 @@
 {
-  "version": 2,
+  "version": 3,
   "targetPackage": "com.instagram.android",
-
-  "_comment": "v2, rebuilt from a real device dump. Resource-ID matchers now default to EXACT matching on the short name (after 'id/'). Substring matching caused the whole-app gating bug: 'main_feed' is a substring of 'main_feed_action_bar', which Instagram renders on every single screen. Use \"mode\":\"prefix\" or \"contains\" only when deliberately intended.",
-
-  "_chrome_note": "The ids below were confirmed present on all 14 captured screens. They are app chrome, not content. Never key a rule to any of them.",
-  "_chrome_never_match": [
-    "main_feed_action_bar", "action_bar_root", "action_bar_linearlayout",
-    "tab_bar", "tab_icon", "tab_avatar", "clips_tab", "feed_tab",
-    "direct_tab", "search_tab", "profile_tab", "container", "wrapper",
-    "modal_container", "sticky_header_list", "refreshable_container",
-    "swipeable_tab_view_pager", "swipe_navigation_container",
-    "layout_container_main", "overlay_layout_container"
-  ],
-
+  "_comment": "v3, built from a second real dump. Two hard-won rules. (1) Resource IDs match EXACTLY on the short name by default; substring matching made 'main_feed' match 'main_feed_action_bar', which is on every screen. (2) Instagram PRELOADS the Reels tab inside a swipeable ViewPager, so clips_* IDs exist in the tree on every screen including the home feed. Presence proves nothing. Use \"mode\":\"visible\" to require the node actually be on screen. Modes: equals (default), visible, prefix, visiblePrefix, contains.",
+  "_chrome_note": "Confirmed present on ALL screens and therefore useless as signals: main_feed_action_bar, tab_bar, clips_tab, feed_tab, direct_tab, search_tab, profile_tab, avatar_container, clips_video_container, clips_viewer_container, clips_viewer_view_pager, clips_media_component, root_clips_layout, container, wrapper, refreshable_container.",
   "screens": {
     "REELS_CREATE": {
       "any": [
-        { "type": "resourceId", "contains": "clips_capture" },
-        { "type": "resourceId", "contains": "camera_shutter" },
-        { "type": "resourceId", "contains": "gallery_picker" },
-        { "type": "resourceId", "contains": "media_picker" },
-        { "type": "resourceId", "mode": "prefix", "contains": "creation_" },
-        { "type": "resourceId", "contains": "caption_input" },
-        { "type": "contentDesc", "contains": "shutter" }
+        {
+          "type": "resourceId",
+          "contains": "clips_capture"
+        },
+        {
+          "type": "resourceId",
+          "contains": "camera_shutter"
+        },
+        {
+          "type": "resourceId",
+          "contains": "gallery_picker"
+        },
+        {
+          "type": "resourceId",
+          "contains": "media_picker"
+        },
+        {
+          "type": "resourceId",
+          "mode": "prefix",
+          "contains": "creation_"
+        },
+        {
+          "type": "resourceId",
+          "contains": "caption_input"
+        },
+        {
+          "type": "contentDesc",
+          "contains": "shutter"
+        }
       ],
       "none": []
     },
-
     "REELS_CONSUME": {
-      "_comment": "The full-screen Reels player. NOT yet confirmed against a dump: the capture never reached the Reels tab. The 'none' list is confirmed though: clips_container / clips_items_view / clips_header_* are the inline Reels CAROUSEL embedded in the home feed, and clips_tab is the nav button. All appear while you are on the home feed and must never trigger a gate.",
+      "_comment": "The Reels tab. clips_* IDs are preloaded on every screen, so every matcher here requires the node to be VISIBLE. reel_viewer_* is the STORY viewer in Instagram's legacy naming and must never appear here.",
       "any": [
-        { "type": "resourceId", "contains": "clips_viewer" },
-        { "type": "resourceId", "contains": "clips_video_container" },
-        { "type": "resourceId", "mode": "prefix", "contains": "clips_viewer_" },
-        { "type": "resourceId", "contains": "reel_viewer_media" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "clips_viewer_view_pager"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "clips_viewer_container"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "clips_video_container"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "clips_ufi_component"
+        }
       ],
       "none": [
-        { "type": "resourceId", "contains": "clips_tab" },
-        { "type": "resourceId", "contains": "clips_container" },
-        { "type": "resourceId", "contains": "clips_items_view" },
-        { "type": "resourceId", "contains": "clips_header_container" },
-        { "type": "resourceId", "contains": "clips_dismiss_button" },
-        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" },
-        { "type": "resourceId", "contains": "clips_capture" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "reel_viewer_root"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visiblePrefix",
+          "contains": "row_feed_"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "main_feed_action_bar"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "clips_capture"
+        }
       ]
     },
-
     "REELS_FROM_DM": {
-      "_comment": "Not yet confirmed. clips_tab removed from 'none' because it is nav chrome present everywhere, which would have permanently disabled this rule.",
+      "_comment": "Provenance (recently in DMs) is the primary signal; these confirm it.",
       "any": [
-        { "type": "resourceId", "contains": "direct_reply" },
-        { "type": "resourceId", "contains": "reel_viewer_reply" },
-        { "type": "resourceId", "contains": "direct_visual_reply" },
-        { "type": "contentDesc", "contains": "reply to" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "direct_reply"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "message_composer_container"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "direct_visual_reply"
+        }
       ],
       "none": []
     },
-
     "EXPLORE_GRID": {
-      "_comment": "Not yet confirmed: the capture never reached Explore. Deliberately narrow, so Explore will currently fail open rather than gate the wrong thing.",
+      "_comment": "STILL UNCONFIRMED: the capture never reached Explore. Narrow on purpose so it fails open rather than gating the wrong screen. cf_hub_recycler_view is a candidate seen in chrome but unverified, so it is NOT used.",
       "any": [
-        { "type": "resourceId", "contains": "explore_grid" },
-        { "type": "resourceId", "contains": "discover_grid" },
-        { "type": "resourceId", "contains": "explore_recycler" },
-        { "type": "resourceId", "contains": "explore_feed" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "explore_grid"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "discover_grid"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "explore_recycler"
+        }
       ],
       "none": [
-        { "type": "resourceId", "contains": "row_search_user" },
-        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" }
+        {
+          "type": "resourceId",
+          "mode": "visiblePrefix",
+          "contains": "row_feed_"
+        }
       ]
     },
-
     "SEARCH": {
       "any": [
-        { "type": "resourceId", "contains": "row_search_user" },
-        { "type": "resourceId", "contains": "search_result" },
-        { "type": "resourceId", "contains": "row_search_for_x" },
-        { "type": "resourceId", "contains": "search_people" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "row_search_user"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "search_result"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "search_row"
+        }
       ],
       "none": [
-        { "type": "resourceId", "contains": "explore_grid" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "explore_grid"
+        }
       ]
     },
-
     "DMS": {
-      "_comment": "direct_tab removed: it is the permanent nav button, present on every screen.",
+      "_comment": "CONFIRMED ids from dump: direct_inbox_action_bar, inbox_refreshable_thread_list_recyclerview.",
       "any": [
-        { "type": "resourceId", "contains": "direct_thread" },
-        { "type": "resourceId", "contains": "thread_message" },
-        { "type": "resourceId", "contains": "row_thread" },
-        { "type": "resourceId", "contains": "message_composer" },
-        { "type": "resourceId", "contains": "row_inbox_container" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "direct_inbox_action_bar"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "inbox_refreshable_thread_list_recyclerview"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "direct_thread"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "thread_message"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "row_thread"
+        }
       ],
       "none": []
     },
-
     "PROFILE": {
-      "_comment": "'followers' text removed: it appears in feed rows too. profile_tab removed: nav chrome.",
       "any": [
-        { "type": "resourceId", "contains": "profile_header" },
-        { "type": "resourceId", "contains": "user_detail" },
-        { "type": "resourceId", "contains": "profile_header_avatar" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "profile_header"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "user_detail"
+        }
       ],
       "none": [
-        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" }
+        {
+          "type": "resourceId",
+          "mode": "visiblePrefix",
+          "contains": "row_feed_"
+        }
       ]
     },
-
     "STORY": {
+      "_comment": "CONFIRMED. reel_viewer_root is the story viewer. Checked before REELS_CONSUME.",
       "any": [
-        { "type": "resourceId", "contains": "reel_viewer_root" },
-        { "type": "resourceId", "contains": "story_viewer" },
-        { "type": "resourceId", "contains": "reel_viewer_texture_view" }
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "reel_viewer_root"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "reel_viewer_media_container"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "reel_viewer_progress_bar"
+        }
       ],
       "none": []
     },
-
     "FEED": {
-      "_comment": "CONFIRMED from dump. row_feed_* is the only reliable home-feed signal. 'main_feed' was the bug: it substring-matched main_feed_action_bar, which is on every screen, so the entire app classified as FEED and the 20-post cap fired everywhere.",
+      "_comment": "CONFIRMED. row_feed_* visible on screen is the home feed. main_feed_action_bar exists everywhere so it may only be used as a VISIBLE check, never presence.",
       "any": [
-        { "type": "resourceId", "mode": "prefix", "contains": "row_feed_" },
-        { "type": "resourceId", "contains": "row_feed_profile_header" },
-        { "type": "resourceId", "contains": "row_feed_photo_imageview" }
+        {
+          "type": "resourceId",
+          "mode": "visiblePrefix",
+          "contains": "row_feed_"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "reels_tray_container"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "row_feed_profile_header"
+        }
       ],
-      "none": []
+      "none": [
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "reel_viewer_root"
+        }
+      ]
     }
   },
-
   "markers": {
     "feedEnd": [
       "suggested for you",
@@ -137,20 +269,18 @@
       "based on your activity"
     ]
   },
-
   "storyTray": {
-    "_comment": "UNCONFIRMED. No story tray appeared in any captured screen (all 14 were scrolled past it), so no tray ID is known yet and rings cannot draw. Needs a capture taken at the very top of the home feed.",
-    "containerIds": ["stories_tray", "reel_tray", "story_tray_recycler", "stories_tray_container"],
-    "itemIds": ["story_tray_item", "avatar_container", "reel_tray_item", "story_avatar"]
+    "_comment": "DISABLED at your request. Ring masking is off; avatar_container turned out to be present on every screen, so the grey donuts stuck everywhere.",
+    "containerIds": [],
+    "itemIds": []
   },
-
   "policy": {
     "feedCap": 20,
     "sessionMinutes": 5,
     "gateWordCount": 30,
     "gateMinDistinctWords": 14,
     "gateSimilarityRejectThreshold": 0.65,
-    "maskRings": true,
+    "maskRings": false,
     "ringThicknessFraction": 0.055,
     "ringOuterFraction": 0.92,
     "ringVerticalBiasFraction": 0.44,

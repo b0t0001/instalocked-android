@@ -3,7 +3,6 @@ package com.instalocked.overlay
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.util.TypedValue
@@ -13,7 +12,6 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.instalocked.config.Policy
 
 /**
  * Everything that draws on top of Instagram lives here.
@@ -28,7 +26,6 @@ class OverlayManager(private val ctx: Context) {
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private var scrim: View? = null
-    private var ringMask: RingMaskView? = null
     private var chip: TextView? = null
 
     private val overlayType =
@@ -129,34 +126,12 @@ class OverlayManager(private val ctx: Context) {
 
     // -------------------------------------------------------------- ring mask
 
-    fun showRings(rects: List<Rect>, policy: Policy) {
-        if (rects.isEmpty()) { hideRings(); return }
-        var v = ringMask
-        if (v == null) {
-            v = RingMaskView(ctx, policy)
-            val lp = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                overlayType,
-                // Not touchable, not focusable: taps fall straight through to
-                // Instagram so opening a story still works normally.
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            )
-            try {
-                wm.addView(v, lp)
-                ringMask = v
-            } catch (t: Throwable) { return }
-        }
-        v.update(rects, policy)
-    }
+    // showRings() removed: ring masking is disabled. avatar_container, the id it
+    // relied on, is present on every screen in Instagram, so the grey donuts
+    // stuck to Reels and Stories as well as the story tray.
 
-    fun hideRings() {
-        ringMask?.let { try { wm.removeView(it) } catch (t: Throwable) { } }
-        ringMask = null
-    }
+    /** No-op retained so callers stay simple; ring masking is disabled. */
+    fun hideRings() { }
 
     // ---------------------------------------------------------- countdown chip
 

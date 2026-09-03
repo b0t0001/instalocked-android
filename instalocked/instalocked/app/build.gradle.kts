@@ -11,8 +11,8 @@ android {
         applicationId = "com.instalocked"
         minSdk = 26
         targetSdk = 30
-        versionCode = 5
-        versionName = "2.0-exactmatch"
+        versionCode = 6
+        versionName = "3.0-visibility"
     }
 
     buildTypes {

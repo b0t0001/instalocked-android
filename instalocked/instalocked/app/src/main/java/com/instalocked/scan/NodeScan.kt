@@ -3,37 +3,45 @@ package com.instalocked.scan
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import com.instalocked.config.Config
+import com.instalocked.config.Matcher
 
 /**
  * A flattened snapshot of one window's node tree.
  *
- * This runs on the accessibility callback thread, which shares a budget with
- * Instagram's own rendering. On a Snapdragon 662 an unbounded walk of a feed
- * with video rows is easily 20ms+, which shows up as visible jank in the app
- * being watched. Hence the hard caps on node count and depth.
+ * The important distinction here is [idNames] versus [visibleIds]. Instagram
+ * keeps the Reels tab preloaded inside a swipeable ViewPager, so IDs like
+ * clips_video_container and clips_viewer_container exist in the tree on EVERY
+ * screen, including the home feed. Matching on their presence classified the
+ * whole app as Reels. Only their on-screen bounds reveal which tab you are
+ * actually looking at.
  */
 class NodeScan(
-    /** Full ids, e.g. "com.instagram.android:id/main_feed_action_bar". */
-    val resourceIds: Set<String>,
-    /** Short names only, e.g. "main_feed_action_bar". What matchers compare against. */
+    /** Short id names present anywhere in the tree. */
     val idNames: Set<String>,
+    /** Short id names whose bounds actually intersect the display. */
+    val visibleIds: Set<String>,
     val contentDescs: Set<String>,
     val texts: Set<String>,
-    val trayItemBounds: List<Rect>,
     val nodeCount: Int,
     val truncated: Boolean
 ) {
-    fun hasResourceId(fragment: String) = resourceIds.any { it.contains(fragment) }
     fun hasContentDesc(fragment: String) = contentDescs.any { it.contains(fragment) }
     fun hasText(fragment: String) = texts.any { it.contains(fragment) }
 
-    private fun idMatches(m: com.instalocked.config.Matcher): Boolean = when (m.mode) {
-        "prefix" -> idNames.any { it.startsWith(m.contains) }
-        "contains" -> idNames.any { it.contains(m.contains) }
-        else -> idNames.contains(m.contains)
+    private fun ids(m: Matcher): Set<String> =
+        if (m.mode == "visible") visibleIds else idNames
+
+    private fun idMatches(m: Matcher): Boolean {
+        val pool = ids(m)
+        return when (m.mode) {
+            "prefix" -> pool.any { it.startsWith(m.contains) }
+            "visiblePrefix" -> visibleIds.any { it.startsWith(m.contains) }
+            "contains" -> pool.any { it.contains(m.contains) }
+            else -> pool.contains(m.contains)
+        }
     }
 
-    fun matches(m: com.instalocked.config.Matcher): Boolean = when (m.type) {
+    fun matches(m: Matcher): Boolean = when (m.type) {
         "resourceId" -> idMatches(m)
         "contentDesc" -> hasContentDesc(m.contains)
         "text" -> hasText(m.contains)
@@ -41,26 +49,29 @@ class NodeScan(
     }
 
     companion object {
-        private const val MAX_NODES = 900
-        private const val MAX_DEPTH = 28
+        // Raised from 900/28: every capture came back truncated at depth 28,
+        // meaning the classifier was reasoning about a partial tree.
+        private const val MAX_NODES = 1600
+        private const val MAX_DEPTH = 45
 
-        fun of(root: AccessibilityNodeInfo?, config: Config): NodeScan {
-            val ids = HashSet<String>(128)
-            val names = HashSet<String>(128)
-            val descs = HashSet<String>(64)
-            val texts = HashSet<String>(128)
-            val trayBounds = ArrayList<Rect>(12)
+        /** A node counts as visible only if a real fraction of it is on screen. */
+        private const val MIN_VISIBLE_PX = 4
+
+        fun of(root: AccessibilityNodeInfo?, config: Config, screen: Rect): NodeScan {
+            val names = HashSet<String>(192)
+            val visible = HashSet<String>(128)
+            val descs = HashSet<String>(96)
+            val texts = HashSet<String>(160)
             var count = 0
             var truncated = false
 
-            if (root == null) {
-                return NodeScan(ids, names, descs, texts, trayBounds, 0, false)
-            }
+            if (root == null) return NodeScan(names, visible, descs, texts, 0, false)
 
-            // Explicit stack rather than recursion: Instagram's trees are deep and
-            // a StackOverflowError inside an accessibility callback kills the service.
+            // Explicit stack, not recursion: Instagram's trees are deep and a
+            // StackOverflowError inside an accessibility callback kills the service.
             val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
             stack.addLast(root to 0)
+            val bounds = Rect()
 
             while (stack.isNotEmpty()) {
                 if (count >= MAX_NODES) { truncated = true; break }
@@ -69,15 +80,14 @@ class NodeScan(
 
                 val vid = node.viewIdResourceName?.lowercase()
                 if (vid != null) {
-                    ids.add(vid)
-                    names.add(vid.substringAfter("id/"))
-                    // Collect story tray item geometry while we are already here,
-                    // so masking never needs a second traversal.
-                    if (config.trayItemIds.any { vid.contains(it) }) {
-                        val r = Rect()
-                        node.getBoundsInScreen(r)
-                        if (r.width() > 0 && r.height() > 0) trayBounds.add(r)
-                    }
+                    val short = vid.substringAfter("id/")
+                    names.add(short)
+                    node.getBoundsInScreen(bounds)
+                    val onScreen = bounds.width() >= MIN_VISIBLE_PX &&
+                        bounds.height() >= MIN_VISIBLE_PX &&
+                        bounds.right > screen.left && bounds.left < screen.right &&
+                        bounds.bottom > screen.top && bounds.top < screen.bottom
+                    if (onScreen) visible.add(short)
                 }
 
                 node.contentDescription?.let {
@@ -90,8 +100,7 @@ class NodeScan(
                 }
 
                 if (depth < MAX_DEPTH) {
-                    val n = node.childCount
-                    for (i in 0 until n) {
+                    for (i in 0 until node.childCount) {
                         val child = try { node.getChild(i) } catch (t: Throwable) { null }
                         if (child != null) stack.addLast(child to depth + 1)
                     }
@@ -100,44 +109,7 @@ class NodeScan(
                 }
             }
 
-            // If we found a tray container but no items matched, fall back to
-            // treating the container's direct children as items.
-            if (trayBounds.isEmpty() && config.trayContainerIds.isNotEmpty()) {
-                findTrayByContainer(root, config, trayBounds)
-            }
-
-            trayBounds.sortBy { it.left }
-            return NodeScan(ids, names, descs, texts, trayBounds, count, truncated)
-        }
-
-        private fun findTrayByContainer(
-            root: AccessibilityNodeInfo,
-            config: Config,
-            out: MutableList<Rect>
-        ) {
-            val stack = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-            stack.addLast(root to 0)
-            var guard = 0
-            while (stack.isNotEmpty() && guard < MAX_NODES) {
-                guard++
-                val (node, depth) = stack.removeLast()
-                val vid = node.viewIdResourceName?.lowercase()
-                if (vid != null && config.trayContainerIds.any { vid.contains(it) }) {
-                    for (i in 0 until node.childCount) {
-                        val child = try { node.getChild(i) } catch (t: Throwable) { null } ?: continue
-                        val r = Rect()
-                        child.getBoundsInScreen(r)
-                        if (r.width() > 0 && r.height() > 0) out.add(r)
-                    }
-                    return
-                }
-                if (depth < MAX_DEPTH) {
-                    for (i in 0 until node.childCount) {
-                        val child = try { node.getChild(i) } catch (t: Throwable) { null }
-                        if (child != null) stack.addLast(child to depth + 1)
-                    }
-                }
-            }
+            return NodeScan(names, visible, descs, texts, count, truncated)
         }
     }
 }

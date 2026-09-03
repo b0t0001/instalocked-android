@@ -2,10 +2,12 @@ package com.instalocked.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.instalocked.config.Config
 import com.instalocked.overlay.OverlayManager
 import com.instalocked.policy.GuardState
@@ -50,6 +52,7 @@ class GuardService : AccessibilityService() {
     private lateinit var state: GuardState
 
     private val main = Handler(Looper.getMainLooper())
+    private val screenRect = Rect()
     private var lastContentScan = 0L
     private var currentScreen = Screen.UNKNOWN
     private var lastScreen = Screen.UNKNOWN
@@ -93,6 +96,8 @@ class GuardService : AccessibilityService() {
         config = Config.load(this)
         overlays = OverlayManager(this)
         state = Store.loadState(this)
+        val dm = resources.displayMetrics
+        screenRect.set(0, 0, dm.widthPixels, dm.heightPixels)
     }
 
     fun reloadConfig() {
@@ -179,7 +184,7 @@ class GuardService : AccessibilityService() {
 
     private fun evaluate(force: Boolean = false) {
         val root = try { rootInActiveWindow } catch (t: Throwable) { null } ?: return
-        val scan = try { NodeScan.of(root, config) } catch (t: Throwable) { return }
+        val scan = try { NodeScan.of(root, config, screenRect) } catch (t: Throwable) { return }
 
 
         val now = System.currentTimeMillis()
@@ -230,11 +235,11 @@ class GuardService : AccessibilityService() {
                         "Then you get ${config.policy.sessionMinutes} minutes.",
                     primaryLabel = "Write the reason",
                     onPrimary = { launchGate(screen) },
-                    secondaryLabel = "Go back",
+                    secondaryLabel = "Leave Reels",
                     onSecondary = {
                         overlays.hideScrim()
                         overlayQuietUntil = System.currentTimeMillis() + OVERLAY_QUIET_MS
-                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        leaveReelsTab()
                     }
                 )
                 overlayQuietUntil = now + OVERLAY_QUIET_MS
@@ -252,11 +257,11 @@ class GuardService : AccessibilityService() {
                         "You've seen ${config.policy.feedCap} posts from people you follow.",
                     primaryLabel = null,
                     onPrimary = null,
-                    secondaryLabel = "Go back",
+                    secondaryLabel = "Back to top",
                     onSecondary = {
                         overlays.hideScrim()
                         overlayQuietUntil = System.currentTimeMillis() + OVERLAY_QUIET_MS
-                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        scrollFeedToTop()
                     }
                 )
                 overlayQuietUntil = now + OVERLAY_QUIET_MS
@@ -278,12 +283,10 @@ class GuardService : AccessibilityService() {
             gateStreak = 0
         }
 
-        // ---- ring masking ----
-        if (decision.maskRings && scan.trayItemBounds.isNotEmpty()) {
-            overlays.showRings(scan.trayItemBounds, config.policy)
-        } else if (screen != Screen.FEED) {
-            overlays.hideRings()
-        }
+        // Ring masking removed. avatar_container turned out to be present on
+        // every screen in the app, so the grey donuts stuck to Reels and Stories
+        // as well as the story tray, and the geometry was wrong besides.
+        overlays.hideRings()
 
         // ---- countdown chip ----
         if (state.sessionActive(now) && now - lastBounceAt > 1800L) {
@@ -343,6 +346,83 @@ class GuardService : AccessibilityService() {
         main.postDelayed({ overlays.hideChip() }, 1800L)
     }
 
+    /**
+     * Walk the feed back to the very top rather than just dismissing the scrim.
+     *
+     * GLOBAL_ACTION_BACK left you exactly where you were, which meant the block
+     * could be cleared and immediately re-earned with a couple of small scrolls.
+     * Returning to position zero makes the cap mean something.
+     */
+    private fun scrollFeedToTop() {
+        val node = rootInActiveWindow?.let { findScrollable(it) } ?: return
+        var remaining = 25
+        val step = object : Runnable {
+            override fun run() {
+                if (remaining-- <= 0) return
+                val moved = try {
+                    node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                } catch (t: Throwable) { false }
+                if (moved) main.postDelayed(this, 70L)
+                else PolicyEngine.resetFeedCounters(state)
+            }
+        }
+        main.post(step)
+        PolicyEngine.resetFeedCounters(state)
+    }
+
+    /**
+     * Leave the Reels tab outright by tapping the Home tab, so dismissing the
+     * gate cannot drop you back onto the same reel with scrolling still live.
+     * feed_tab is a confirmed id from the device dump.
+     */
+    private fun leaveReelsTab() {
+        val root = rootInActiveWindow
+        val home = root?.let { findById(it, "feed_tab") }
+        val clicked = try {
+            home?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+        } catch (t: Throwable) { false }
+        if (!clicked) performGlobalAction(GLOBAL_ACTION_BACK)
+    }
+
+    private fun findScrollable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var guard = 0
+        var best: AccessibilityNodeInfo? = null
+        while (stack.isNotEmpty() && guard < 900) {
+            guard++
+            val n = stack.removeLast()
+            if (n.isScrollable && best == null) best = n
+            for (i in 0 until n.childCount) {
+                val c = try { n.getChild(i) } catch (t: Throwable) { null }
+                if (c != null) stack.addLast(c)
+            }
+        }
+        return best
+    }
+
+    private fun findById(root: AccessibilityNodeInfo, shortId: String): AccessibilityNodeInfo? {
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var guard = 0
+        while (stack.isNotEmpty() && guard < 900) {
+            guard++
+            val n = stack.removeLast()
+            val vid = n.viewIdResourceName?.lowercase()
+            if (vid != null && vid.substringAfter("id/") == shortId) {
+                var cur: AccessibilityNodeInfo? = n
+                var hops = 0
+                while (cur != null && !cur.isClickable && hops++ < 4) cur = cur.parent
+                return cur ?: n
+            }
+            for (i in 0 until n.childCount) {
+                val c = try { n.getChild(i) } catch (t: Throwable) { null }
+                if (c != null) stack.addLast(c)
+            }
+        }
+        return null
+    }
+
     private fun launchGate(screen: Screen) {
         overlays.hideScrim()
         val i = Intent(this, GateActivity::class.java).apply {
@@ -386,16 +466,16 @@ class GuardService : AccessibilityService() {
             .append("  classified=").append(screen.name)
             .append("  nodes=").append(scan.nodeCount)
             .append(" truncated=").append(scan.truncated).append("\n")
-        sb.append("-- resourceIds --\n")
-        scan.idNames.sorted().forEach { sb.append("  ").append(it).append("\n") }
+        sb.append("-- VISIBLE resourceIds --\n")
+        scan.visibleIds.sorted().forEach { sb.append("  ").append(it).append("\n") }
+        sb.append("-- present but OFF-SCREEN --\n")
+        (scan.idNames - scan.visibleIds).sorted()
+            .forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- contentDescs --\n")
         scan.contentDescs.sorted().take(40).forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- marker text hits --\n")
         if (markerHits.isEmpty()) sb.append("  (none)\n")
         else markerHits.forEach { sb.append("  ").append(it).append("\n") }
-        sb.append("-- trayItemBounds --\n")
-        if (scan.trayItemBounds.isEmpty()) sb.append("  (none found)\n")
-        else scan.trayItemBounds.forEach { sb.append("  ").append(it.toShortString()).append("\n") }
         sb.append("\n")
         Store.appendDump(this, sb.toString())
     }

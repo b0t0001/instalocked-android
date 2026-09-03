@@ -39,7 +39,6 @@ object ScreenClassifier {
      */
     private val ORDER = listOf(
         "DMS" to Screen.DMS,
-        "STORY" to Screen.STORY,
         // EXPLORE_GRID must come BEFORE SEARCH. Instagram's Explore page has a
         // search field at the top, so testing SEARCH first classified the entire
         // discovery grid as "the user is searching" and allowed it straight through.
@@ -53,6 +52,13 @@ object ScreenClassifier {
         // 1. Creating always wins over anything that looks like consuming.
         config.screens["REELS_CREATE"]?.let {
             if (fires(it, scan)) return Screen.REELS_CREATE
+        }
+
+        // 2. STORY before REELS_CONSUME. Instagram's story viewer uses the
+        // legacy "reel_viewer_*" prefix, which is easy to confuse with Reels.
+        // Stories are allowed; misfiling one as Reels gates your friends' stories.
+        config.screens["STORY"]?.let {
+            if (fires(it, scan)) return Screen.STORY
         }
 
         // 2. Is a reel viewer on screen at all?
