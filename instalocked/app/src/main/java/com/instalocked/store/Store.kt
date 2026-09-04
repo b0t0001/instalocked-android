@@ -65,7 +65,7 @@ object Store {
 
     fun captureUntil(ctx: Context): Long = prefs(ctx).getLong(K_CAPTURE_UNTIL, 0L)
 
-    fun startCapture(ctx: Context, minutes: Int = 3) {
+    fun startCapture(ctx: Context, minutes: Int = 10) {
         prefs(ctx).edit()
             .putLong(K_CAPTURE_UNTIL, System.currentTimeMillis() + minutes * 60_000L)
             .apply()

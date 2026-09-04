@@ -104,7 +104,7 @@ class MainActivity : Activity() {
             "back, and read the dump.")
 
         val capturing = Store.captureUntil(this) > System.currentTimeMillis()
-        actionRow(if (capturing) "Capturing \u2014 stop" else "Start capture (3 min)") {
+        actionRow(if (capturing) "Capturing \u2014 stop" else "Start capture (10 min)") {
             if (capturing) {
                 Store.stopCapture(this)
             } else {

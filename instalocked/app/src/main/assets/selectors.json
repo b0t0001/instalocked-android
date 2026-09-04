@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "targetPackage": "com.instagram.android",
   "_comment": "v3, built from a second real dump. Two hard-won rules. (1) Resource IDs match EXACTLY on the short name by default; substring matching made 'main_feed' match 'main_feed_action_bar', which is on every screen. (2) Instagram PRELOADS the Reels tab inside a swipeable ViewPager, so clips_* IDs exist in the tree on every screen including the home feed. Presence proves nothing. Use \"mode\":\"visible\" to require the node actually be on screen. Modes: equals (default), visible, prefix, visiblePrefix, contains.",
   "_chrome_note": "Confirmed present on ALL screens and therefore useless as signals: main_feed_action_bar, tab_bar, clips_tab, feed_tab, direct_tab, search_tab, profile_tab, avatar_container, clips_video_container, clips_viewer_container, clips_viewer_view_pager, clips_media_component, root_clips_layout, container, wrapper, refreshable_container.",
@@ -39,7 +39,7 @@
       "none": []
     },
     "REELS_CONSUME": {
-      "_comment": "The Reels tab. clips_* IDs are preloaded on every screen, so every matcher here requires the node to be VISIBLE. reel_viewer_* is the STORY viewer in Instagram's legacy naming and must never appear here.",
+      "_comment": "The Reels TAB. clips_* ids are preloaded everywhere so every matcher requires VISIBLE. Distinguished from a sent reel by the presence of the bottom nav bar, which a full-screen sent reel does not draw.",
       "any": [
         {
           "type": "resourceId",
@@ -86,8 +86,23 @@
       ]
     },
     "REELS_FROM_DM": {
-      "_comment": "Provenance (recently in DMs) is the primary signal; these confirm it.",
+      "_comment": "CONFIRMED discriminator, derived by diffing real Reels-tab captures against real sent-reel captures: the bottom nav (tab_bar) is VISIBLE on the Reels tab and ABSENT on a reel opened from a DM, which opens full-screen. This is structural and needs no timer. The old provenance-only rule wrongly treated 'visited DMs, then tapped the Reels tab within 45s' as a sent reel, which is why gating went weak.",
       "any": [
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "clips_footer_mask_container"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "comment_composer_text_view"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "comment_composer_inner_layout"
+        },
         {
           "type": "resourceId",
           "mode": "visible",
@@ -96,15 +111,26 @@
         {
           "type": "resourceId",
           "mode": "visible",
-          "contains": "message_composer_container"
+          "contains": "direct_visual_reply"
+        }
+      ],
+      "none": [
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "tab_bar"
         },
         {
           "type": "resourceId",
           "mode": "visible",
-          "contains": "direct_visual_reply"
+          "contains": "clips_tab"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "feed_tab"
         }
-      ],
-      "none": []
+      ]
     },
     "EXPLORE_GRID": {
       "_comment": "STILL UNCONFIRMED: the capture never reached Explore. Narrow on purpose so it fails open rather than gating the wrong screen. cf_hub_recycler_view is a candidate seen in chrome but unverified, so it is NOT used.",

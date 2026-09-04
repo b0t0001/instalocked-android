@@ -42,10 +42,19 @@ class GuardService : AccessibilityService() {
         const val GATE_BACK_COOLDOWN_MS = 1500L
 
         /** Upper bound on distinct screens recorded in one capture run. */
-        const val MAX_CAPTURED_SCREENS = 24
+        const val MAX_CAPTURED_SCREENS = 40
 
-        /** Max dumps recorded per classification, so one screen can't hog the budget. */
+        /** Max dumps per RECOGNISED classification, so one screen can't hog the budget. */
         const val PER_SCREEN_QUOTA = 3
+
+        /**
+         * UNKNOWN gets a far bigger allowance. It is the diagnostic bucket: any
+         * screen without a rule yet lands here, which is exactly the material
+         * needed to write new rules. Capping it at 3 like everything else meant
+         * transition frames filled the quota and genuinely new screens (Explore)
+         * were silently discarded.
+         */
+        const val UNKNOWN_QUOTA = 14
     }
 
     private lateinit var config: Config
@@ -193,15 +202,10 @@ class GuardService : AccessibilityService() {
             msSinceDms = if (state.lastDmsAt == 0L) Long.MAX_VALUE else now - state.lastDmsAt,
             provenanceWindowMs = config.policy.dmReelProvenanceMs
         )
-        var screen = ScreenClassifier.classify(scan, config, ctx)
-
-        // A reel a friend sent can run longer than the provenance window. Once
-        // we have recognised one, keep treating the viewer as a shared reel
-        // until the user actually leaves it, rather than letting a timer expire
-        // mid-watch and slam the gate down on your friend's video.
-        if (screen == Screen.REELS_CONSUME && currentScreen == Screen.REELS_FROM_DM) {
-            screen = Screen.REELS_FROM_DM
-        }
+        // Sent reels are now told apart from the Reels tab structurally (the
+        // bottom nav bar is absent on a full-screen shared reel), so there is no
+        // timer to expire mid-watch and no sticky state to leak the other way.
+        val screen = ScreenClassifier.classify(scan, config, ctx)
         maybeCapture(scan, screen)
 
         if (screen != currentScreen) {
@@ -298,6 +302,22 @@ class GuardService : AccessibilityService() {
         if (scan.coverBounds.isNotEmpty()) overlays.showCover(scan.coverBounds)
         else overlays.hideCover()
 
+        // ---- capture feedback ----
+        // Three capture runs in a row missed the Explore page with no way to
+        // tell until the dump was read on a laptop. Show progress live instead.
+        val capUntil = Store.captureUntil(this)
+        if (capUntil > now) {
+            val left = (capUntil - now) / 1000
+            val unknowns = capturedPerScreen[Screen.UNKNOWN] ?: 0
+            val got = capturedPerScreen.keys
+                .filter { it != Screen.UNKNOWN }
+                .joinToString(" ") { it.name.take(5) }
+            overlays.showChip("REC %d:%02d  %s  ?%d/%d".format(
+                left / 60, left % 60,
+                if (got.isEmpty()) "-" else got, unknowns, UNKNOWN_QUOTA))
+            return
+        }
+
         // ---- countdown chip ----
         if (state.sessionActive(now) && now - lastBounceAt > 1800L) {
             val left = ((state.sessionEndsAt - now) / 1000L).coerceAtLeast(0)
@@ -377,8 +397,20 @@ class GuardService : AccessibilityService() {
      * require it to be taller than it is wide.
      */
     private fun scrollFeedToTop() {
-        main.postDelayed({ doScrollToTop(30) }, 260L)
         PolicyEngine.resetFeedCounters(state)
+        // Instagram scrolls the feed to the top when you tap the Home tab while
+        // already on Home. Using the app's own behaviour beats trying to drive
+        // its RecyclerView: accessibility scroll actions were silently failing
+        // because the list does not always report itself as scrollable.
+        main.postDelayed({
+            val root = rootInActiveWindow
+            val home = root?.let { findById(it, "feed_tab") }
+            val tapped = try {
+                home?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+            } catch (t: Throwable) { false }
+            // Fall back to driving the list only if the tab tap was unavailable.
+            if (!tapped) doScrollToTop(30)
+        }, 300L)
     }
 
     private fun doScrollToTop(remainingIn: Int) {
@@ -512,8 +544,11 @@ class GuardService : AccessibilityService() {
         if (capturedSignatures.size >= MAX_CAPTURED_SCREENS) return
 
         // Quota per screen type, so the home feed cannot eat the whole budget.
+        // UNKNOWN is deliberately generous: it holds the screens we cannot yet
+        // classify, which are the only ones worth capturing for new rules.
         val seen = capturedPerScreen[screen] ?: 0
-        if (seen >= PER_SCREEN_QUOTA) return
+        val quota = if (screen == Screen.UNKNOWN) UNKNOWN_QUOTA else PER_SCREEN_QUOTA
+        if (seen >= quota) return
 
         val signature = scan.idNames.sorted().joinToString("|").hashCode()
         if (!capturedSignatures.add(signature)) return
