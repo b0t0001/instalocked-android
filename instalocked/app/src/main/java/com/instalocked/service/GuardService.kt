@@ -2,10 +2,12 @@ package com.instalocked.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.instalocked.config.Config
 import com.instalocked.overlay.OverlayManager
 import com.instalocked.policy.GuardState
@@ -39,7 +41,10 @@ class GuardService : AccessibilityService() {
         const val GATE_BACK_COOLDOWN_MS = 1500L
 
         /** Upper bound on distinct screens recorded in one capture run. */
-        const val MAX_CAPTURED_SCREENS = 14
+        const val MAX_CAPTURED_SCREENS = 24
+
+        /** Max dumps recorded per classification, so one screen can't hog the budget. */
+        const val PER_SCREEN_QUOTA = 3
     }
 
     private lateinit var config: Config
@@ -47,6 +52,7 @@ class GuardService : AccessibilityService() {
     private lateinit var state: GuardState
 
     private val main = Handler(Looper.getMainLooper())
+    private val screenRect = Rect()
     private var lastContentScan = 0L
     private var currentScreen = Screen.UNKNOWN
     private var lastScreen = Screen.UNKNOWN
@@ -73,12 +79,25 @@ class GuardService : AccessibilityService() {
     /** Distinct screens already written during capture, keyed by resource-ID set. */
     private val capturedSignatures = HashSet<Int>()
 
+    /**
+     * Per-classification quota for capture.
+     *
+     * Keying dedup on the exact resource-ID set was not enough: the home feed's
+     * IDs shift slightly with every post scrolled, so each scroll position read
+     * as a brand new screen and the entire capture budget was spent on the feed
+     * before ever reaching Reels or Explore. A per-screen-type quota guarantees
+     * coverage across the screens that actually matter.
+     */
+    private val capturedPerScreen = HashMap<Screen, Int>()
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         config = Config.load(this)
         overlays = OverlayManager(this)
         state = Store.loadState(this)
+        val dm = resources.displayMetrics
+        screenRect.set(0, 0, dm.widthPixels, dm.heightPixels)
     }
 
     fun reloadConfig() {
@@ -88,6 +107,7 @@ class GuardService : AccessibilityService() {
     /** Called when a fresh capture run starts, so each run collects screens anew. */
     fun resetCapture() {
         capturedSignatures.clear()
+        capturedPerScreen.clear()
     }
 
     /** Called by SessionService when the five minutes are up. */
@@ -164,9 +184,8 @@ class GuardService : AccessibilityService() {
 
     private fun evaluate(force: Boolean = false) {
         val root = try { rootInActiveWindow } catch (t: Throwable) { null } ?: return
-        val scan = try { NodeScan.of(root, config) } catch (t: Throwable) { return }
+        val scan = try { NodeScan.of(root, config, screenRect) } catch (t: Throwable) { return }
 
-        maybeCapture(scan)
 
         val now = System.currentTimeMillis()
         val ctx = ClassifyContext(
@@ -174,6 +193,7 @@ class GuardService : AccessibilityService() {
             provenanceWindowMs = config.policy.dmReelProvenanceMs
         )
         val screen = ScreenClassifier.classify(scan, config, ctx)
+        maybeCapture(scan, screen)
 
         if (screen != currentScreen) {
             lastScreen = currentScreen
@@ -215,11 +235,11 @@ class GuardService : AccessibilityService() {
                         "Then you get ${config.policy.sessionMinutes} minutes.",
                     primaryLabel = "Write the reason",
                     onPrimary = { launchGate(screen) },
-                    secondaryLabel = "Go back",
+                    secondaryLabel = "Leave Reels",
                     onSecondary = {
                         overlays.hideScrim()
                         overlayQuietUntil = System.currentTimeMillis() + OVERLAY_QUIET_MS
-                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        leaveReelsTab()
                     }
                 )
                 overlayQuietUntil = now + OVERLAY_QUIET_MS
@@ -237,11 +257,11 @@ class GuardService : AccessibilityService() {
                         "You've seen ${config.policy.feedCap} posts from people you follow.",
                     primaryLabel = null,
                     onPrimary = null,
-                    secondaryLabel = "Go back",
+                    secondaryLabel = "Back to top",
                     onSecondary = {
                         overlays.hideScrim()
                         overlayQuietUntil = System.currentTimeMillis() + OVERLAY_QUIET_MS
-                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        scrollFeedToTop()
                     }
                 )
                 overlayQuietUntil = now + OVERLAY_QUIET_MS
@@ -263,12 +283,10 @@ class GuardService : AccessibilityService() {
             gateStreak = 0
         }
 
-        // ---- ring masking ----
-        if (decision.maskRings && scan.trayItemBounds.isNotEmpty()) {
-            overlays.showRings(scan.trayItemBounds, config.policy)
-        } else if (screen != Screen.FEED) {
-            overlays.hideRings()
-        }
+        // Ring masking removed. avatar_container turned out to be present on
+        // every screen in the app, so the grey donuts stuck to Reels and Stories
+        // as well as the story tray, and the geometry was wrong besides.
+        overlays.hideRings()
 
         // ---- countdown chip ----
         if (state.sessionActive(now) && now - lastBounceAt > 1800L) {
@@ -286,6 +304,13 @@ class GuardService : AccessibilityService() {
             Screen.DMS -> {
                 state.lastDmsAt = now
                 dmReelIndex = Int.MIN_VALUE
+                PolicyEngine.resetFeedCounters(state)
+            }
+            Screen.REELS_CONSUME, Screen.EXPLORE_GRID, Screen.SEARCH -> {
+                // Left the home feed for real: drop the post counter so a stale
+                // high-water mark can't make the end-of-feed scrim follow you
+                // onto screens that have nothing to do with the feed.
+                PolicyEngine.resetFeedCounters(state)
             }
             Screen.REELS_FROM_DM -> {
                 // Re-arm on each entry so the first scroll event establishes the
@@ -321,6 +346,83 @@ class GuardService : AccessibilityService() {
         main.postDelayed({ overlays.hideChip() }, 1800L)
     }
 
+    /**
+     * Walk the feed back to the very top rather than just dismissing the scrim.
+     *
+     * GLOBAL_ACTION_BACK left you exactly where you were, which meant the block
+     * could be cleared and immediately re-earned with a couple of small scrolls.
+     * Returning to position zero makes the cap mean something.
+     */
+    private fun scrollFeedToTop() {
+        val node = rootInActiveWindow?.let { findScrollable(it) } ?: return
+        var remaining = 25
+        val step = object : Runnable {
+            override fun run() {
+                if (remaining-- <= 0) return
+                val moved = try {
+                    node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                } catch (t: Throwable) { false }
+                if (moved) main.postDelayed(this, 70L)
+                else PolicyEngine.resetFeedCounters(state)
+            }
+        }
+        main.post(step)
+        PolicyEngine.resetFeedCounters(state)
+    }
+
+    /**
+     * Leave the Reels tab outright by tapping the Home tab, so dismissing the
+     * gate cannot drop you back onto the same reel with scrolling still live.
+     * feed_tab is a confirmed id from the device dump.
+     */
+    private fun leaveReelsTab() {
+        val root = rootInActiveWindow
+        val home = root?.let { findById(it, "feed_tab") }
+        val clicked = try {
+            home?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+        } catch (t: Throwable) { false }
+        if (!clicked) performGlobalAction(GLOBAL_ACTION_BACK)
+    }
+
+    private fun findScrollable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var guard = 0
+        var best: AccessibilityNodeInfo? = null
+        while (stack.isNotEmpty() && guard < 900) {
+            guard++
+            val n = stack.removeLast()
+            if (n.isScrollable && best == null) best = n
+            for (i in 0 until n.childCount) {
+                val c = try { n.getChild(i) } catch (t: Throwable) { null }
+                if (c != null) stack.addLast(c)
+            }
+        }
+        return best
+    }
+
+    private fun findById(root: AccessibilityNodeInfo, shortId: String): AccessibilityNodeInfo? {
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var guard = 0
+        while (stack.isNotEmpty() && guard < 900) {
+            guard++
+            val n = stack.removeLast()
+            val vid = n.viewIdResourceName?.lowercase()
+            if (vid != null && vid.substringAfter("id/") == shortId) {
+                var cur: AccessibilityNodeInfo? = n
+                var hops = 0
+                while (cur != null && !cur.isClickable && hops++ < 4) cur = cur.parent
+                return cur ?: n
+            }
+            for (i in 0 until n.childCount) {
+                val c = try { n.getChild(i) } catch (t: Throwable) { null }
+                if (c != null) stack.addLast(c)
+            }
+        }
+        return null
+    }
+
     private fun launchGate(screen: Screen) {
         overlays.hideScrim()
         val i = Intent(this, GateActivity::class.java).apply {
@@ -343,30 +445,37 @@ class GuardService : AccessibilityService() {
      * your actual conversation. Only text matching a configured marker is
      * recorded, since that is all the classifier ever looks at.
      */
-    private fun maybeCapture(scan: NodeScan) {
+    private fun maybeCapture(scan: NodeScan, screen: Screen) {
         val until = Store.captureUntil(this)
         if (until <= 0L || System.currentTimeMillis() > until) return
+        if (scan.idNames.isEmpty()) return
         if (capturedSignatures.size >= MAX_CAPTURED_SCREENS) return
 
-        val signature = scan.resourceIds.sorted().joinToString("|").hashCode()
+        // Quota per screen type, so the home feed cannot eat the whole budget.
+        val seen = capturedPerScreen[screen] ?: 0
+        if (seen >= PER_SCREEN_QUOTA) return
+
+        val signature = scan.idNames.sorted().joinToString("|").hashCode()
         if (!capturedSignatures.add(signature)) return
+        capturedPerScreen[screen] = seen + 1
 
         val markerHits = config.feedEndMarkers.filter { scan.hasText(it) }
 
         val sb = StringBuilder()
         sb.append("=== screen ").append(capturedSignatures.size)
+            .append("  classified=").append(screen.name)
             .append("  nodes=").append(scan.nodeCount)
             .append(" truncated=").append(scan.truncated).append("\n")
-        sb.append("-- resourceIds --\n")
-        scan.resourceIds.sorted().forEach { sb.append("  ").append(it).append("\n") }
+        sb.append("-- VISIBLE resourceIds --\n")
+        scan.visibleIds.sorted().forEach { sb.append("  ").append(it).append("\n") }
+        sb.append("-- present but OFF-SCREEN --\n")
+        (scan.idNames - scan.visibleIds).sorted()
+            .forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- contentDescs --\n")
         scan.contentDescs.sorted().take(40).forEach { sb.append("  ").append(it).append("\n") }
         sb.append("-- marker text hits --\n")
         if (markerHits.isEmpty()) sb.append("  (none)\n")
         else markerHits.forEach { sb.append("  ").append(it).append("\n") }
-        sb.append("-- trayItemBounds --\n")
-        if (scan.trayItemBounds.isEmpty()) sb.append("  (none found)\n")
-        else scan.trayItemBounds.forEach { sb.append("  ").append(it.toShortString()).append("\n") }
         sb.append("\n")
         Store.appendDump(this, sb.toString())
     }
