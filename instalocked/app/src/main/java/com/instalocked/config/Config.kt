@@ -52,8 +52,7 @@ class Config(
     val targetPackage: String,
     val screens: Map<String, ScreenRule>,
     val feedEndMarkers: List<String>,
-    val trayContainerIds: List<String>,
-    val trayItemIds: List<String>,
+    val coverIds: List<String>,
     val policy: Policy
 ) {
     companion object {
@@ -99,14 +98,12 @@ class Config(
                 for (i in 0 until arr.length()) feedEnd.add(arr.optString(i).lowercase())
             }
 
-            val tray = root.optJSONObject("storyTray") ?: JSONObject()
-            val containerIds = ArrayList<String>()
-            tray.optJSONArray("containerIds")?.let { arr ->
-                for (i in 0 until arr.length()) containerIds.add(arr.optString(i).lowercase())
-            }
-            val itemIds = ArrayList<String>()
-            tray.optJSONArray("itemIds")?.let { arr ->
-                for (i in 0 until arr.length()) itemIds.add(arr.optString(i).lowercase())
+            val cover = root.optJSONObject("cover") ?: JSONObject()
+            val coverIds = ArrayList<String>()
+            if (cover.optBoolean("enabled", true)) {
+                cover.optJSONArray("ids")?.let { arr ->
+                    for (i in 0 until arr.length()) coverIds.add(arr.optString(i).lowercase())
+                }
             }
 
             val p = root.optJSONObject("policy") ?: JSONObject()
@@ -131,8 +128,7 @@ class Config(
                 targetPackage = root.optString("targetPackage", "com.instagram.android"),
                 screens = screens,
                 feedEndMarkers = feedEnd,
-                trayContainerIds = containerIds,
-                trayItemIds = itemIds,
+                coverIds = coverIds,
                 policy = policy
             )
         }

@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "targetPackage": "com.instagram.android",
   "_comment": "v3, built from a second real dump. Two hard-won rules. (1) Resource IDs match EXACTLY on the short name by default; substring matching made 'main_feed' match 'main_feed_action_bar', which is on every screen. (2) Instagram PRELOADS the Reels tab inside a swipeable ViewPager, so clips_* IDs exist in the tree on every screen including the home feed. Presence proves nothing. Use \"mode\":\"visible\" to require the node actually be on screen. Modes: equals (default), visible, prefix, visiblePrefix, contains.",
   "_chrome_note": "Confirmed present on ALL screens and therefore useless as signals: main_feed_action_bar, tab_bar, clips_tab, feed_tab, direct_tab, search_tab, profile_tab, avatar_container, clips_video_container, clips_viewer_container, clips_viewer_view_pager, clips_media_component, root_clips_layout, container, wrapper, refreshable_container.",
@@ -160,8 +160,28 @@
       ]
     },
     "DMS": {
-      "_comment": "CONFIRMED ids from dump: direct_inbox_action_bar, inbox_refreshable_thread_list_recyclerview.",
+      "_comment": "CONFIRMED. Inbox: direct_inbox_action_bar / cf_hub_recycler_view. Thread: message_thread_container / thread_view_root / message_list. The old rule used 'direct_thread' with EXACT matching, but no such id exists; the real ones are direct_thread_header and direct_thread_content_below_action_bar, so open threads fell through as UNKNOWN and stopped feeding the sent-reel provenance signal.",
       "any": [
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "message_thread_container"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "thread_view_root"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "message_list"
+        },
+        {
+          "type": "resourceId",
+          "mode": "visible",
+          "contains": "direct_thread_header"
+        },
         {
           "type": "resourceId",
           "mode": "visible",
@@ -174,18 +194,8 @@
         },
         {
           "type": "resourceId",
-          "mode": "visible",
-          "contains": "direct_thread"
-        },
-        {
-          "type": "resourceId",
-          "mode": "visible",
-          "contains": "thread_message"
-        },
-        {
-          "type": "resourceId",
-          "mode": "visible",
-          "contains": "row_thread"
+          "mode": "visiblePrefix",
+          "contains": "row_thread_composer"
         }
       ],
       "none": []
@@ -286,7 +296,12 @@
     "ringVerticalBiasFraction": 0.44,
     "ringColor": "#FF6E6E6E",
     "dailySessionLimit": 4,
-    "dmReelProvenanceMs": 25000,
+    "dmReelProvenanceMs": 45000,
     "dmReelBounce": true
+  },
+  "cover": {
+    "_comment": "Opaque black boxes drawn over the bounds of these ids whenever they are VISIBLE, independent of screen classification. INTENTIONALLY EMPTY: the Explore grid has never appeared in a capture, so its id is unknown. Do NOT guess with cf_hub_recycler_view - that one is confirmed VISIBLE on the DM inbox and would black out your messages.",
+    "enabled": true,
+    "ids": []
   }
 }

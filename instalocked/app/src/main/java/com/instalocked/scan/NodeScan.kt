@@ -22,6 +22,8 @@ class NodeScan(
     val visibleIds: Set<String>,
     val contentDescs: Set<String>,
     val texts: Set<String>,
+    /** On-screen bounds of nodes configured for black-box covering. */
+    val coverBounds: List<Rect>,
     val nodeCount: Int,
     val truncated: Boolean
 ) {
@@ -62,10 +64,11 @@ class NodeScan(
             val visible = HashSet<String>(128)
             val descs = HashSet<String>(96)
             val texts = HashSet<String>(160)
+            val covers = ArrayList<Rect>(4)
             var count = 0
             var truncated = false
 
-            if (root == null) return NodeScan(names, visible, descs, texts, 0, false)
+            if (root == null) return NodeScan(names, visible, descs, texts, emptyList(), 0, false)
 
             // Explicit stack, not recursion: Instagram's trees are deep and a
             // StackOverflowError inside an accessibility callback kills the service.
@@ -87,7 +90,12 @@ class NodeScan(
                         bounds.height() >= MIN_VISIBLE_PX &&
                         bounds.right > screen.left && bounds.left < screen.right &&
                         bounds.bottom > screen.top && bounds.top < screen.bottom
-                    if (onScreen) visible.add(short)
+                    if (onScreen) {
+                        visible.add(short)
+                        if (config.coverIds.any { short == it || short.contains(it) }) {
+                            covers.add(Rect(bounds))
+                        }
+                    }
                 }
 
                 node.contentDescription?.let {
@@ -109,7 +117,7 @@ class NodeScan(
                 }
             }
 
-            return NodeScan(names, visible, descs, texts, count, truncated)
+            return NodeScan(names, visible, descs, texts, covers, count, truncated)
         }
     }
 }

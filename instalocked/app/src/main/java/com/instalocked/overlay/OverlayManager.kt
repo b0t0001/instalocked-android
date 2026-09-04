@@ -3,6 +3,7 @@ package com.instalocked.overlay
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.util.TypedValue
@@ -27,6 +28,7 @@ class OverlayManager(private val ctx: Context) {
 
     private var scrim: View? = null
     private var chip: TextView? = null
+    private var cover: CoverView? = null
 
     private val overlayType =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -133,6 +135,32 @@ class OverlayManager(private val ctx: Context) {
     /** No-op retained so callers stay simple; ring masking is disabled. */
     fun hideRings() { }
 
+    // ------------------------------------------------------------ black boxes
+
+    fun showCover(rects: List<Rect>) {
+        if (rects.isEmpty()) { hideCover(); return }
+        var v = cover
+        if (v == null) {
+            v = CoverView(ctx)
+            val lp = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                overlayType,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+            )
+            try { wm.addView(v, lp); cover = v } catch (t: Throwable) { return }
+        }
+        v.update(rects)
+    }
+
+    fun hideCover() {
+        cover?.let { try { wm.removeView(it) } catch (t: Throwable) { } }
+        cover = null
+    }
+
     // ---------------------------------------------------------- countdown chip
 
     fun showChip(text: String) {
@@ -172,6 +200,6 @@ class OverlayManager(private val ctx: Context) {
     }
 
     fun hideAll() {
-        hideScrim(); hideRings(); hideChip()
+        hideScrim(); hideRings(); hideChip(); hideCover()
     }
 }

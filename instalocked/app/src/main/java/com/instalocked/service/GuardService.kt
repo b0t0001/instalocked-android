@@ -3,6 +3,7 @@ package com.instalocked.service
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -192,7 +193,15 @@ class GuardService : AccessibilityService() {
             msSinceDms = if (state.lastDmsAt == 0L) Long.MAX_VALUE else now - state.lastDmsAt,
             provenanceWindowMs = config.policy.dmReelProvenanceMs
         )
-        val screen = ScreenClassifier.classify(scan, config, ctx)
+        var screen = ScreenClassifier.classify(scan, config, ctx)
+
+        // A reel a friend sent can run longer than the provenance window. Once
+        // we have recognised one, keep treating the viewer as a shared reel
+        // until the user actually leaves it, rather than letting a timer expire
+        // mid-watch and slam the gate down on your friend's video.
+        if (screen == Screen.REELS_CONSUME && currentScreen == Screen.REELS_FROM_DM) {
+            screen = Screen.REELS_FROM_DM
+        }
         maybeCapture(scan, screen)
 
         if (screen != currentScreen) {
@@ -283,10 +292,11 @@ class GuardService : AccessibilityService() {
             gateStreak = 0
         }
 
-        // Ring masking removed. avatar_container turned out to be present on
-        // every screen in the app, so the grey donuts stuck to Reels and Stories
-        // as well as the story tray, and the geometry was wrong besides.
-        overlays.hideRings()
+        // Black boxes over configured regions, driven purely by what is visible
+        // rather than by classification, so it works even on screens the
+        // classifier does not recognise.
+        if (scan.coverBounds.isNotEmpty()) overlays.showCover(scan.coverBounds)
+        else overlays.hideCover()
 
         // ---- countdown chip ----
         if (state.sessionActive(now) && now - lastBounceAt > 1800L) {
@@ -353,28 +363,95 @@ class GuardService : AccessibilityService() {
      * could be cleared and immediately re-earned with a couple of small scrolls.
      * Returning to position zero makes the cap mean something.
      */
+    /**
+     * Walk the feed back to position zero.
+     *
+     * The previous version silently did nothing, for two reasons. First it read
+     * rootInActiveWindow while the scrim was still up, and the scrim is a
+     * focusable overlay, so the "active window" was our own blocker rather than
+     * Instagram. Second, findScrollable took the first scrollable in the tree,
+     * which is swipeable_nav_view_pager_inner_recycler_view: the HORIZONTAL tab
+     * pager. Scrolling that backward switches tabs instead of scrolling posts.
+     *
+     * Now: wait for the scrim to come down, then pick the feed list by id and
+     * require it to be taller than it is wide.
+     */
     private fun scrollFeedToTop() {
-        val node = rootInActiveWindow?.let { findScrollable(it) } ?: return
-        var remaining = 25
+        main.postDelayed({ doScrollToTop(30) }, 260L)
+        PolicyEngine.resetFeedCounters(state)
+    }
+
+    private fun doScrollToTop(remainingIn: Int) {
+        val root = rootInActiveWindow ?: return
+        val node = findFeedList(root) ?: return
+
+        // Fast path: RecyclerView honours an explicit jump to row zero.
+        val args = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_ROW_INT, 0)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_COLUMN_INT, 0)
+        }
+        val jumped = try {
+            node.performAction(
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_TO_POSITION.id, args
+            )
+        } catch (t: Throwable) { false }
+        if (jumped) {
+            PolicyEngine.resetFeedCounters(state)
+            return
+        }
+
+        // Otherwise page backwards until it stops moving.
+        var remaining = remainingIn
         val step = object : Runnable {
             override fun run() {
-                if (remaining-- <= 0) return
+                if (remaining-- <= 0) { PolicyEngine.resetFeedCounters(state); return }
+                val live = rootInActiveWindow?.let { findFeedList(it) } ?: return
                 val moved = try {
-                    node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                    live.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
                 } catch (t: Throwable) { false }
-                if (moved) main.postDelayed(this, 70L)
+                if (moved) main.postDelayed(this, 80L)
                 else PolicyEngine.resetFeedCounters(state)
             }
         }
         main.post(step)
-        PolicyEngine.resetFeedCounters(state)
     }
 
     /**
-     * Leave the Reels tab outright by tapping the Home tab, so dismissing the
-     * gate cannot drop you back onto the same reel with scrolling still live.
-     * feed_tab is a confirmed id from the device dump.
+     * The vertical feed list, not the horizontal tab pager sitting above it.
+     * Confirmed ids from the device dump: "list" and "sticky_header_list".
      */
+    private fun findFeedList(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val preferred = listOf("list", "sticky_header_list", "recycler_view")
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.addLast(root)
+        var guard = 0
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = 0
+        val b = Rect()
+        while (stack.isNotEmpty() && guard < 1200) {
+            guard++
+            val n = stack.removeLast()
+            if (n.isScrollable) {
+                n.getBoundsInScreen(b)
+                val vertical = b.height() > b.width()
+                val id = n.viewIdResourceName?.lowercase()?.substringAfter("id/")
+                val area = b.width() * b.height()
+                if (vertical && area > bestArea) {
+                    // A preferred id wins outright; otherwise take the largest
+                    // vertical scroller on screen.
+                    if (id != null && preferred.contains(id)) return n
+                    best = n
+                    bestArea = area
+                }
+            }
+            for (i in 0 until n.childCount) {
+                val c = try { n.getChild(i) } catch (t: Throwable) { null }
+                if (c != null) stack.addLast(c)
+            }
+        }
+        return best
+    }
+
     private fun leaveReelsTab() {
         val root = rootInActiveWindow
         val home = root?.let { findById(it, "feed_tab") }
@@ -382,23 +459,6 @@ class GuardService : AccessibilityService() {
             home?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
         } catch (t: Throwable) { false }
         if (!clicked) performGlobalAction(GLOBAL_ACTION_BACK)
-    }
-
-    private fun findScrollable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        val stack = ArrayDeque<AccessibilityNodeInfo>()
-        stack.addLast(root)
-        var guard = 0
-        var best: AccessibilityNodeInfo? = null
-        while (stack.isNotEmpty() && guard < 900) {
-            guard++
-            val n = stack.removeLast()
-            if (n.isScrollable && best == null) best = n
-            for (i in 0 until n.childCount) {
-                val c = try { n.getChild(i) } catch (t: Throwable) { null }
-                if (c != null) stack.addLast(c)
-            }
-        }
-        return best
     }
 
     private fun findById(root: AccessibilityNodeInfo, shortId: String): AccessibilityNodeInfo? {
